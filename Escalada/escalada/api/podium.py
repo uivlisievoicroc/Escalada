@@ -1,0 +1,28 @@
+from fastapi import APIRouter, HTTPException
+from typing import List, Dict
+from pathlib import Path
+import pandas as pd
+
+router = APIRouter()
+
+@router.get("/podium/{category}", response_model=List[Dict[str, str]])
+async def get_podium(category: str):
+    """
+    Returnează primii 3 clasați pentru categoria specificată,
+    citind fișierul Excel generat anterior.
+    """
+    excel_path = Path("escalada/clasamente") / category / "overall.xlsx"
+    if not excel_path.exists():
+        raise HTTPException(status_code=404, detail="Clasament inexistent pentru categoria specificată.")
+    try:
+        df = pd.read_excel(excel_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Eroare la citirea fișierului Excel: {e}")
+    # Presupunem că DataFrame-ul are coloana "Nume" și este deja sortat după tipărirea cu Rank
+    top3 = df.head(3)
+    colors = ["#ffd700", "#c0c0c0", "#cd7f32"]  # aur, argint, bronz
+    result = []
+    for idx, row in enumerate(top3.itertuples()):
+        name = getattr(row, "Nume", None) or getattr(row, "Name", None)
+        result.append({"name": name, "color": colors[idx]})
+    return result
