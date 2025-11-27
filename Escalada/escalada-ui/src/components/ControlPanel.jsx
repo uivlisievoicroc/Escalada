@@ -7,7 +7,7 @@ import QRCode from 'react-qr-code';
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import ModalUpload from "./ModalUpload";
 import ModalTimer from "./ModalTimer";
-import { startTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute } from '../utilis/contestActions';
+import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute } from '../utilis/contestActions';
 import ModalModifyScore from "./ModalModifyScore";
 import getWinners from '../utilis/getWinners';
 
@@ -44,7 +44,7 @@ window.addEventListener("error", (e) => {
   };
   const [listboxes, setListboxes] = useState(loadListboxes);
   const [climbingTime, setClimbingTime] = useState(() => localStorage.getItem("climbingTime") || "05:00");
-  const [startedTabs, setStartedTabs] = useState({});
+  const [timerStates, setTimerStates] = useState({});
   const [activeBoxId, setActiveBoxId] = useState(null);
   const [activeCompetitor, setActiveCompetitor] = useState("");
   const [showScoreModal, setShowScoreModal] = useState(false);
@@ -59,7 +59,7 @@ window.addEventListener("error", (e) => {
   // Refs pentru a păstra ultima versiune a stărilor
   const listboxesRef = useRef(listboxes);
   const currentClimbersRef = useRef(currentClimbers);
-  const startedTabsRef = useRef(startedTabs);
+  const timerStatesRef = useRef(timerStates);
   const holdClicksRef = useRef(holdClicks);
 
   // Menține ref-urile actualizate la fiecare schimbare de stare
@@ -72,8 +72,8 @@ window.addEventListener("error", (e) => {
   }, [currentClimbers]);
 
   useEffect(() => {
-    startedTabsRef.current = startedTabs;
-  }, [startedTabs]);
+    timerStatesRef.current = timerStates;
+  }, [timerStates]);
 
   useEffect(() => {
     holdClicksRef.current = holdClicks;
@@ -94,11 +94,13 @@ window.addEventListener("error", (e) => {
 
           switch (msg.type) {
             case 'START_TIMER':
-              setStartedTabs(prev => {
-                const updated = { ...prev, [idx]: true };
-                console.log("Actualizare startedTabs:", updated);
-                return updated;
-              });
+              setTimerStates(prev => ({ ...prev, [idx]: "running" }));
+              break;
+            case 'STOP_TIMER':
+              setTimerStates(prev => ({ ...prev, [idx]: "paused" }));
+              break;
+            case 'RESUME_TIMER':
+              setTimerStates(prev => ({ ...prev, [idx]: "running" }));
               break;
             case 'PROGRESS_UPDATE':
               setHoldClicks(prev => {
@@ -113,7 +115,7 @@ window.addEventListener("error", (e) => {
             case 'SUBMIT_SCORE':
               setHoldClicks(prev => ({ ...prev, [idx]: 0 }));
               setUsedHalfHold(prev => ({ ...prev, [idx]: false }));
-              setStartedTabs(prev => ({ ...prev, [idx]: false }));
+              setTimerStates(prev => ({ ...prev, [idx]: "idle" }));
               break;
             case 'REQUEST_STATE':
               const box = listboxesRef.current[idx] || {};
@@ -124,12 +126,22 @@ window.addEventListener("error", (e) => {
                   initiated: !!box.initiated,
                   holdsCount: box.holdsCount ?? 0,
                   currentClimber: currentClimbersRef.current[idx] ?? '',
-                  started: !!startedTabsRef.current[idx],
+                  started: timerStatesRef.current[idx] === "running",
+                  timerState: timerStatesRef.current[idx] || "idle",
                   holdCount: holdClicksRef.current[idx] ?? 0
                 };
                 wsRefs.current[idx].send(JSON.stringify(snapshot));
                 })();
                 break;
+            case 'STATE_SNAPSHOT':
+              setTimerStates(prev => ({ ...prev, [idx]: msg.timerState || (msg.started ? "running" : "idle") }));
+              if (typeof msg.holdCount === "number") {
+                setHoldClicks(prev => ({ ...prev, [idx]: msg.holdCount }));
+              }
+              if (typeof msg.currentClimber === "string") {
+                setCurrentClimbers(prev => ({ ...prev, [idx]: msg.currentClimber }));
+              }
+              break;
             default:
               break;
           }
@@ -143,6 +155,26 @@ window.addEventListener("error", (e) => {
   }, [listboxes]);
   // Ascultă sincronizarea timerelor via localStorage (evenimentul 'storage')
   useEffect(() => {
+    // BroadcastChannel pentru comenzi timer (START/STOP/RESUME) din alte ferestre
+    let bcCmd;
+    const handleTimerCmd = (cmd) => {
+      if (!cmd || typeof cmd.boxId !== "number") return;
+      if (cmd.type === "START_TIMER") setTimerStates(prev => ({ ...prev, [cmd.boxId]: "running" }));
+      if (cmd.type === "STOP_TIMER") setTimerStates(prev => ({ ...prev, [cmd.boxId]: "paused" }));
+      if (cmd.type === "RESUME_TIMER") setTimerStates(prev => ({ ...prev, [cmd.boxId]: "running" }));
+    };
+    if ("BroadcastChannel" in window) {
+      bcCmd = new BroadcastChannel("timer-cmd");
+      bcCmd.onmessage = (ev) => handleTimerCmd(ev.data);
+    }
+    const onStorageCmd = (e) => {
+      if (e.key !== "timer-cmd" || !e.newValue) return;
+      try {
+        const cmd = JSON.parse(e.newValue);
+        handleTimerCmd(cmd);
+      } catch {}
+    };
+    window.addEventListener("storage", onStorageCmd);
     // BroadcastChannel (preferat)
     let bc;
     if ("BroadcastChannel" in window) {
@@ -151,6 +183,9 @@ window.addEventListener("error", (e) => {
         const { boxId, remaining } = ev.data || {};
         if (typeof boxId === "number" && typeof remaining === "number") {
           setControlTimers(prev => ({ ...prev, [boxId]: remaining }));
+          if (remaining <= 0) {
+            setTimerStates(prev => ({ ...prev, [boxId]: "idle" }));
+          }
         }
       };
     }
@@ -160,12 +195,17 @@ window.addEventListener("error", (e) => {
         const { boxId, remaining } = JSON.parse(e.newValue);
         if (typeof boxId === "number" && typeof remaining === "number") {
           setControlTimers(prev => ({ ...prev, [boxId]: remaining }));
+          if (remaining <= 0) {
+            setTimerStates(prev => ({ ...prev, [boxId]: "idle" }));
+          }
         }
       } catch {}
     };
     window.addEventListener("storage", onStorageTimer);
     return () => {
       window.removeEventListener("storage", onStorageTimer);
+      window.removeEventListener("storage", onStorageCmd);
+      if (bcCmd) bcCmd.close();
       if (bc) bc.close();
     };
   }, []);
@@ -300,7 +340,7 @@ window.addEventListener("error", (e) => {
     // initialize counters for the new box
     setHoldClicks(prev => ({ ...prev, [newIdx]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [newIdx]: false }));
-    setStartedTabs(prev => ({ ...prev, [newIdx]: false }));
+    setTimerStates(prev => ({ ...prev, [newIdx]: "idle" }));
   };
 
   const handleDelete = (index) => {
@@ -319,7 +359,7 @@ window.addEventListener("error", (e) => {
       const { [index]: _, ...rest } = prev;
       return rest;
     });
-    setStartedTabs(prev => {
+    setTimerStates(prev => {
       const { [index]: _, ...rest } = prev;
       return rest;
     });
@@ -355,7 +395,7 @@ window.addEventListener("error", (e) => {
     // reset local state for holds and timer
     setHoldClicks(prev => ({ ...prev, [index]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [index]: false }));
-    setStartedTabs(prev => ({ ...prev, [index]: false }));
+    setTimerStates(prev => ({ ...prev, [index]: "idle" }));
     // reset current climber highlight
     setCurrentClimbers(prev => ({ ...prev, [index]: '' }));
   };
@@ -365,7 +405,7 @@ window.addEventListener("error", (e) => {
     setListboxes(prev =>
       prev.map((lb, i) => i === index ? { ...lb, initiated: true } : lb)
     );
-    setStartedTabs(prev => ({ ...prev, [index]: false }));
+    setTimerStates(prev => ({ ...prev, [index]: "idle" }));
     // 2. Dacă tab‑ul nu există sau s‑a închis → deschide
     let tab = openTabs[index];
     if (!isTabAlive(tab)) {
@@ -406,7 +446,7 @@ window.addEventListener("error", (e) => {
     // resetează contorul local de holds
     setHoldClicks(prev => ({ ...prev, [index]: 0 }));
     // reset timer button
-    setStartedTabs(prev => ({ ...prev, [index]: false }));
+    setTimerStates(prev => ({ ...prev, [index]: "idle" }));
     // Send INIT_ROUTE for the next route
     const currentBox = listboxes[index];
     const nextRouteIndex = currentBox.routeIndex + 1;
@@ -419,12 +459,32 @@ window.addEventListener("error", (e) => {
   // --- handlere globale pentru butoane optimiste ------------------
   const handleClickStart = async (boxIdx) => {
     // Deblocare imediată UI
-    setStartedTabs(prev => ({ ...prev, [boxIdx]: true }));
+    setTimerStates(prev => ({ ...prev, [boxIdx]: "running" }));
     try {
       await startTimer(boxIdx);
     } catch (err) {
       console.error("START_TIMER failed:", err);
-      setStartedTabs(prev => ({ ...prev, [boxIdx]: false }));
+      setTimerStates(prev => ({ ...prev, [boxIdx]: "idle" }));
+    }
+  };
+
+  const handleClickStop = async (boxIdx) => {
+    setTimerStates(prev => ({ ...prev, [boxIdx]: "paused" }));
+    try {
+      await stopTimer(boxIdx);
+    } catch (err) {
+      console.error("STOP_TIMER failed:", err);
+      setTimerStates(prev => ({ ...prev, [boxIdx]: "running" }));
+    }
+  };
+
+  const handleClickResume = async (boxIdx) => {
+    setTimerStates(prev => ({ ...prev, [boxIdx]: "running" }));
+    try {
+      await resumeTimer(boxIdx);
+    } catch (err) {
+      console.error("RESUME_TIMER failed:", err);
+      setTimerStates(prev => ({ ...prev, [boxIdx]: "paused" }));
     }
   };
 
@@ -449,7 +509,7 @@ window.addEventListener("error", (e) => {
     // Reset UI state for this box
     setHoldClicks(prev => ({ ...prev, [boxIdx]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [boxIdx]: false }));
-    setStartedTabs(prev => ({ ...prev, [boxIdx]: false }));
+    setTimerStates(prev => ({ ...prev, [boxIdx]: "idle" }));
     setShowScoreModal(false);
     setActiveBoxId(null);
   };
@@ -527,6 +587,9 @@ window.addEventListener("error", (e) => {
       <div className="mt-6 flex flex-nowrap gap-4 overflow-x-auto">
         {listboxes.map((lb, idx) => {
           const judgeUrl = `${window.location.origin}/#/judge/${idx}`;
+          const timerState = timerStates[idx] || "idle";
+          const isRunning = timerState === "running";
+          const isPaused = timerState === "paused";
           return (
   <details
     key={idx}
@@ -573,19 +636,47 @@ window.addEventListener("error", (e) => {
             Initiate Contest
           </button>
         )}
-          <button
-            className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
-            onClick={() => handleClickStart(idx)}
-            disabled={!lb.initiated || startedTabs[idx]}
-          >
-            Start Time
-          </button>
+          {!isRunning && !isPaused && (
+            <button
+              className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+              onClick={() => handleClickStart(idx)}
+              disabled={!lb.initiated}
+            >
+              Start Time
+            </button>
+          )}
+          {isRunning && (
+            <button
+              className="px-3 py-1 bg-red-600 text-white rounded disabled:opacity-50"
+              onClick={() => handleClickStop(idx)}
+              disabled={!lb.initiated}
+            >
+              Stop Time
+            </button>
+          )}
+          {isPaused && (
+            <div className="flex gap-2">
+              <button
+                className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+                onClick={() => handleClickResume(idx)}
+                disabled={!lb.initiated}
+              >
+                Resume Time
+              </button>
+              <button
+                className="px-3 py-1 bg-gray-500 text-white rounded disabled:opacity-50"
+                disabled={!lb.initiated}
+              >
+                Register Time
+              </button>
+            </div>
+          )}
           <div className="flex flex-col items-center gap-1">
             <div className="flex gap-1">
               <button
                 className="px-12 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition flex flex-col items-center disabled:opacity-50"
                 onClick={() => handleClickHold(idx)}
-                disabled={!lb.initiated || !startedTabs[idx]}
+                disabled={!lb.initiated || !isRunning}
               >
                 <div className="flex flex-col items-center">
                   <span className="text-xs font-medium">{currentClimbers[idx] || ""}</span>
@@ -596,7 +687,7 @@ window.addEventListener("error", (e) => {
               <button
                 className="px-4 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition disabled:opacity-50"
                 onClick={() => handleHalfHoldClick(idx)}
-                disabled={!lb.initiated || !startedTabs[idx] || usedHalfHold[idx]}
+                disabled={!lb.initiated || !isRunning || usedHalfHold[idx]}
               >
                 + .1
               </button>

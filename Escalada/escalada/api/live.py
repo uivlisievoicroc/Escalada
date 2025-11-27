@@ -14,7 +14,7 @@ channels: dict[int, set[WebSocket]] = {}
 
 class Cmd(BaseModel):
     boxId: int
-    type: str   # START_TIMER, PROGRESS_UPDATE, REQUEST_ACTIVE_COMPETITOR, SUBMIT_SCORE, INIT_ROUTE, REQUEST_STATE
+    type: str   # START_TIMER, STOP_TIMER, RESUME_TIMER, PROGRESS_UPDATE, REQUEST_ACTIVE_COMPETITOR, SUBMIT_SCORE, INIT_ROUTE, REQUEST_STATE
 
     # ---- generic optional fields ----
     # for PROGRESS_UPDATE
@@ -39,6 +39,7 @@ async def cmd(cmd: Cmd):
         "holdsCount": 0,
         "currentClimber": "",
         "started": False,
+        "timerState": "idle",
         "holdCount": 0.0,
         "routeIndex": 1,
         "competitors": [],
@@ -51,17 +52,26 @@ async def cmd(cmd: Cmd):
         sm["competitors"] = cmd.competitors or []
         sm["currentClimber"] = cmd.competitors[0]["nume"] if cmd.competitors else ""
         sm["started"] = False
+        sm["timerState"] = "idle"
         sm["holdCount"] = 0.0
         if cmd.categorie:
             sm["categorie"] = cmd.categorie
     elif cmd.type == "START_TIMER":
         sm["started"] = True
+        sm["timerState"] = "running"
+    elif cmd.type == "STOP_TIMER":
+        sm["started"] = False
+        sm["timerState"] = "paused"
+    elif cmd.type == "RESUME_TIMER":
+        sm["started"] = True
+        sm["timerState"] = "running"
     elif cmd.type == "PROGRESS_UPDATE":
         delta = cmd.delta or 1
         new_count = (int(sm["holdCount"]) + 1) if delta == 1 else round(sm["holdCount"] + delta, 1)
         sm["holdCount"] = new_count
     elif cmd.type == "SUBMIT_SCORE":
         sm["started"] = False
+        sm["timerState"] = "idle"
         sm["holdCount"] = 0.0
         # marchează competitorul și mută la următorul
         if sm.get("competitors"):
@@ -126,6 +136,7 @@ def _build_snapshot(box_id: int, state: dict) -> dict:
         "routeIndex": state.get("routeIndex", 1),
         "currentClimber": state.get("currentClimber", ""),
         "started": state.get("started", False),
+        "timerState": state.get("timerState", "idle"),
         "holdCount": state.get("holdCount", 0.0),
         "competitors": state.get("competitors", []),
         "categorie": state.get("categorie", ""),

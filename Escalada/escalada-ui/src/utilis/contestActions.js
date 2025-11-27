@@ -3,12 +3,45 @@ const API = `${API_PROTOCOL}://${window.location.hostname}:8000/api/cmd`;
 // src/utils/contestActions.js
 
 export async function startTimer(boxId) {
+    try {
+      localStorage.setItem(
+        "timer-cmd",
+        JSON.stringify({ type: "START_TIMER", boxId, ts: Date.now() })
+      );
+    } catch {}
     await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ boxId, type: 'START_TIMER' })
     });
-    
+  }
+
+  export async function stopTimer(boxId) {
+    try {
+      localStorage.setItem(
+        "timer-cmd",
+        JSON.stringify({ type: "STOP_TIMER", boxId, ts: Date.now() })
+      );
+    } catch {}
+    await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boxId, type: 'STOP_TIMER' })
+    });
+  }
+
+  export async function resumeTimer(boxId) {
+    try {
+      localStorage.setItem(
+        "timer-cmd",
+        JSON.stringify({ type: "RESUME_TIMER", boxId, ts: Date.now() })
+      );
+    } catch {}
+    await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boxId, type: 'RESUME_TIMER' })
+    });
   }
   
   export async function updateProgress(boxId, delta = 1) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { startTimer, updateProgress, submitScore, requestState } from '../utilis/contestActions';
+import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, requestState } from '../utilis/contestActions';
 import ModalScore from './ModalScore';
 import ModalModifyScore from './ModalModifyScore';
 
@@ -9,6 +9,7 @@ const JudgePage = () => {
   const idx = Number(boxId);
   const [initiated, setInitiated] = useState(false);
   const [started, setStarted] = useState(false);
+  const [timerState, setTimerState] = useState("idle");
   const [usedHalfHold, setUsedHalfHold] = useState(false);
   const [currentClimber, setCurrentClimber] = useState("");
   const [holdCount, setHoldCount] = useState(0);
@@ -28,6 +29,7 @@ useEffect(() => {
           setMaxScore(st.holdsCount);
           setCurrentClimber(st.currentClimber);
           setStarted(st.started);
+          setTimerState(st.timerState || (st.started ? "running" : "idle"));
           setHoldCount(st.holdCount);
         }
       } catch (e) {
@@ -54,11 +56,21 @@ useEffect(() => {
             : ''
         );
         setStarted(false);
+        setTimerState("idle");
         setUsedHalfHold(false);
         setHoldCount(0);
       }
       if (msg.type === 'START_TIMER') {
         setStarted(true);
+        setTimerState("running");
+      }
+      if (msg.type === 'STOP_TIMER') {
+        setStarted(false);
+        setTimerState("paused");
+      }
+      if (msg.type === 'RESUME_TIMER') {
+        setStarted(true);
+        setTimerState("running");
       }
       if (msg.type === 'PROGRESS_UPDATE') {
         const delta = typeof msg.delta === 'number' ? msg.delta : 1;
@@ -72,6 +84,7 @@ useEffect(() => {
       if (msg.type === 'SUBMIT_SCORE') {
         // reset state identic ControlPanel
         setStarted(false);
+        setTimerState("idle");
         setUsedHalfHold(false);
         setHoldCount(0);
       }
@@ -81,6 +94,7 @@ useEffect(() => {
         setMaxScore(msg.holdsCount);
         setCurrentClimber(msg.currentClimber || '');
         setStarted(msg.started);
+        setTimerState(msg.timerState || (msg.started ? "running" : "idle"));
         setHoldCount(msg.holdCount || 0);
       }
       // Handle ACTIVE_CLIMBER broadcast
@@ -98,6 +112,19 @@ useEffect(() => {
   const handleStartTime = () => {
     startTimer(idx);
     setStarted(true);
+    setTimerState("running");
+  };
+
+  const handleStopTime = () => {
+    stopTimer(idx);
+    setStarted(false);
+    setTimerState("paused");
+  };
+
+  const handleResumeTime = () => {
+    resumeTimer(idx);
+    setStarted(true);
+    setTimerState("running");
   };
 
   // Handler for +1 Hold
@@ -117,20 +144,51 @@ useEffect(() => {
     setShowScoreModal(true);
   };
 
+  const isRunning = timerState === "running";
+  const isPaused = timerState === "paused";
+
   return (
     <div className="p-20 flex flex-col gap-2">
-      <button
-        className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
-        onClick={handleStartTime}
-        disabled={!initiated || started}
-      >
-        Start Time
-      </button>
+      {!isRunning && !isPaused && (
+        <button
+          className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+          onClick={handleStartTime}
+          disabled={!initiated}
+        >
+          Start Time
+        </button>
+      )}
+      {isRunning && (
+        <button
+          className="px-3 py-1 bg-red-600 text-white rounded disabled:opacity-50"
+          onClick={handleStopTime}
+          disabled={!initiated}
+        >
+          Stop Time
+        </button>
+      )}
+      {isPaused && (
+        <div className="flex gap-2">
+          <button
+            className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+            onClick={handleResumeTime}
+            disabled={!initiated}
+          >
+            Resume Time
+          </button>
+          <button
+            className="px-3 py-1 bg-gray-500 text-white rounded disabled:opacity-50"
+            disabled={!initiated}
+          >
+            Register Time
+          </button>
+        </div>
+      )}
       <div className="flex gap-2">
       <button
         className="mt-10 px-12 py-12 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition flex flex-col items-center disabled:opacity-50"
         onClick={handleHoldClick}
-        disabled={!initiated || !started}
+        disabled={!initiated || !isRunning}
         >
         <div className="flex flex-col items-center">
             <span className="text-xs font-medium">{currentClimber || ''}</span>
@@ -141,7 +199,7 @@ useEffect(() => {
         <button
           className="mt-10 px-4 py-5 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handleHalfHoldClick}
-          disabled={!initiated || !started || usedHalfHold}
+          disabled={!initiated || !isRunning || usedHalfHold}
         >
           + .1
         </button>
@@ -149,7 +207,7 @@ useEffect(() => {
       <button
         className="mt-10 px-3 py-1 bg-yellow-500 text-white rounded"
         onClick={handleInsertScore}
-        disabled={!initiated || !started}
+        disabled={!initiated || !isRunning}
       >
         Insert Score
       </button>

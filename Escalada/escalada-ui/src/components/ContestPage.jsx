@@ -125,6 +125,16 @@ const ContestPage = () => {
     const global = localStorage.getItem("climbingTime");
     return specific || global || "05:00";
   };
+  // --- Broadcast channel pentru sincronizare timere ---
+  const timerChannelRef = useRef(null);
+  useEffect(() => {
+    if ("BroadcastChannel" in window) {
+      const ch = new BroadcastChannel("escalada-timer");
+      timerChannelRef.current = ch;
+      return () => ch.close();
+    }
+  }, []);
+
   // --- WebSocket logic ---
   const wsRef = useRef(null);
     useEffect(() => {
@@ -150,13 +160,23 @@ const ContestPage = () => {
           if (rafRef.current) cancelAnimationFrame(rafRef.current);
           setRunning(false);
           setEndTimeMs(null);
+          endTimeRef.current = null;
           const preset = getTimerPreset();
           const [m, s] = preset.split(":").map(Number);
-          setTimerSec((m || 0) * 60 + (s || 0));
+          const resetVal = (m || 0) * 60 + (s || 0);
+          setTimerSec(resetVal);
+          timerSecRef.current = resetVal;
+          setTimerState("idle");
           return;
         }
         if (msg.type === 'START_TIMER') {
           window.postMessage({ type: 'START_TIMER', boxId: msg.boxId }, '*');
+        }
+        if (msg.type === 'STOP_TIMER') {
+          window.postMessage({ type: 'STOP_TIMER', boxId: msg.boxId }, '*');
+        }
+        if (msg.type === 'RESUME_TIMER') {
+          window.postMessage({ type: 'RESUME_TIMER', boxId: msg.boxId }, '*');
         }
         if (msg.type === 'PROGRESS_UPDATE') {
           window.postMessage({ type: 'PROGRESS_UPDATE', boxId: msg.boxId, delta: msg.delta }, '*');
@@ -201,11 +221,20 @@ const ContestPage = () => {
     const [m, s] = t.split(":").map(Number);
     return (m || 0) * 60 + (s || 0);
   });
+  const [timerState, setTimerState] = useState("idle");
   const preset = getTimerPreset();
   const [mPreset, sPreset] = preset.split(":").map(Number);
   const totalSec = (mPreset || 0) * 60 + (sPreset || 0);
   const [endTimeMs, setEndTimeMs] = useState(null);
+  const endTimeRef = useRef(null);
   const rafRef = useRef(null);
+  const timerSecRef = useRef(timerSec);
+  useEffect(() => {
+    timerSecRef.current = timerSec;
+  }, [timerSec]);
+  useEffect(() => {
+    endTimeRef.current = endTimeMs;
+  }, [endTimeMs]);
   const [ranking, setRanking] = useState(() => ({})); // { nume: [scores…] }
   const rankingRef = useRef(ranking);
   useEffect(() => {
@@ -221,23 +250,83 @@ const ContestPage = () => {
   const BAR_WIDTH = 20;
   const [barHeight, setBarHeight] = useState(500);
 
+  const broadcastRemaining = (remaining) => {
+    try {
+      if (timerChannelRef.current) {
+        timerChannelRef.current.postMessage({ boxId: Number(boxId), remaining });
+      } else {
+        localStorage.setItem(
+          `timer-sync-${boxId}`,
+          JSON.stringify({ boxId: Number(boxId), remaining, ts: Date.now() })
+        );
+      }
+    } catch {}
+  };
+
+  const startCountdown = () => {
+    const presetValue = getTimerPreset();
+    const [m, s] = presetValue.split(":").map(Number);
+    const duration = (m || 0) * 60 + (s || 0);
+    const nextEnd = Date.now() + duration * 1000;
+    setTimerSec(duration);
+    timerSecRef.current = duration;
+    setEndTimeMs(nextEnd);
+    endTimeRef.current = nextEnd;
+    setRunning(true);
+    setTimerState("running");
+    localStorage.setItem(`tick-owner-${boxId}`, window.name || "tick-owner");
+    localStorage.setItem(`timer-${boxId}`, duration.toString());
+    broadcastRemaining(duration);
+  };
+
+  const pauseCountdown = () => {
+    const remaining = endTimeRef.current
+      ? Math.max(0, Math.ceil((endTimeRef.current - Date.now()) / 1000))
+      : timerSecRef.current;
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    setRunning(false);
+    setEndTimeMs(null);
+    endTimeRef.current = null;
+    setTimerSec(remaining);
+    timerSecRef.current = remaining;
+    localStorage.setItem(`timer-${boxId}`, remaining.toString());
+    broadcastRemaining(remaining);
+    setTimerState("paused");
+  };
+
+  const resumeCountdown = () => {
+    const remaining = timerSecRef.current;
+    if (remaining <= 0) {
+      setTimerState("idle");
+      return;
+    }
+    const nextEnd = Date.now() + remaining * 1000;
+    setEndTimeMs(nextEnd);
+    endTimeRef.current = nextEnd;
+    setRunning(true);
+    setTimerState("running");
+    localStorage.setItem(`tick-owner-${boxId}`, window.name || "tick-owner");
+  };
+
     // ===== T1 START_TIMER =====
     useEffect(() => {  
-      const onStartT1 = (e) => {
-        if (
-          e.data?.type === "START_TIMER" && +e.data.boxId === +boxId
-        ) {
-          const preset = getTimerPreset();
-          const [m, s] = preset.split(":").map(Number);
-          const duration = (m || 0) * 60 + (s || 0);
-          setTimerSec(duration);
-          setEndTimeMs(Date.now() + duration * 1000);
-          setRunning(true);
-          localStorage.setItem(`tick-owner-${boxId}`, window.name || "tick-owner");
+      const onTimerCommand = (e) => {
+        if (+e.data?.boxId !== +boxId) return;
+        if (e.data?.type === "START_TIMER") {
+          startCountdown();
+        }
+        if (e.data?.type === "STOP_TIMER") {
+          pauseCountdown();
+        }
+        if (e.data?.type === "RESUME_TIMER") {
+          resumeCountdown();
         }
       };
-      window.addEventListener("message", onStartT1);
-      return () => window.removeEventListener("message", onStartT1);
+      window.addEventListener("message", onTimerCommand);
+      return () => window.removeEventListener("message", onTimerCommand);
     }, [boxId]);
 
     // (INIT_ROUTE via WebSocket handled above; removed old postMessage INIT_ROUTE handler)
@@ -268,6 +357,12 @@ const ContestPage = () => {
         if (msg.type === 'START_TIMER' && +msg.boxId === +boxId) {
           window.postMessage({ type: 'START_TIMER', boxId: msg.boxId }, '*');
         }
+        if (msg.type === 'STOP_TIMER' && +msg.boxId === +boxId) {
+          window.postMessage({ type: 'STOP_TIMER', boxId: msg.boxId }, '*');
+        }
+        if (msg.type === 'RESUME_TIMER' && +msg.boxId === +boxId) {
+          window.postMessage({ type: 'RESUME_TIMER', boxId: msg.boxId }, '*');
+        }
         if (msg.type === 'PROGRESS_UPDATE' && +msg.boxId === +boxId) {
           window.postMessage({ type: 'PROGRESS_UPDATE', boxId: msg.boxId, delta: msg.delta }, '*');
         }
@@ -294,6 +389,7 @@ const ContestPage = () => {
         const diff = endTimeMs - Date.now();
         const next = Math.max(0, Math.ceil(diff / 1000));
         setTimerSec(next);
+        timerSecRef.current = next;
         // opțional, sincronizează și în localStorage
         localStorage.setItem(`timer-${boxId}`, next.toString());
         if (next > 0) {
@@ -304,7 +400,10 @@ const ContestPage = () => {
         } else {
           setRunning(false);
           setEndTimeMs(null);
+          endTimeRef.current = null;
+          setTimerState("idle");
         }
+        broadcastRemaining(next);
       };
       // Dacă exista un raf în așteptare, îl anulăm
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -404,9 +503,13 @@ const ContestPage = () => {
             const [m, s] = preset.split(":").map(Number);
             const resetSec = (m || 0) * 60 + (s || 0);
             setTimerSec(resetSec);
+            timerSecRef.current = resetSec;
             setRunning(false);
             setEndTimeMs(null);
+            endTimeRef.current = null;
+            setTimerState("idle");
             localStorage.setItem(`timer-${boxId}`, resetSec.toString());
+            broadcastRemaining(resetSec);
 
             // 5. Detect end of contest
             const after = JSON.parse(localStorage.getItem("listboxes") || "[]");
