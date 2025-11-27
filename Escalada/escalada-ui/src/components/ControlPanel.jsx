@@ -29,11 +29,21 @@ window.addEventListener("error", (e) => {
   const [showModal, setShowModal] = useState(false);
   const [showTimerModal, setShowTimerModal] = useState(false);
   const [controlTimers, setControlTimers] = useState({});
-  const [listboxes, setListboxes] = useState(() => {
+  const loadListboxes = () => {
     const saved = localStorage.getItem("listboxes");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [climbingTime, setClimbingTime] = useState("");
+    const globalPreset = localStorage.getItem("climbingTime") || "05:00";
+    if (!saved) return [];
+    try {
+      return JSON.parse(saved).map(lb => ({
+        ...lb,
+        timerPreset: lb.timerPreset || globalPreset,
+      }));
+    } catch {
+      return [];
+    }
+  };
+  const [listboxes, setListboxes] = useState(loadListboxes);
+  const [climbingTime, setClimbingTime] = useState(() => localStorage.getItem("climbingTime") || "05:00");
   const [startedTabs, setStartedTabs] = useState({});
   const [activeBoxId, setActiveBoxId] = useState(null);
   const [activeCompetitor, setActiveCompetitor] = useState("");
@@ -131,6 +141,34 @@ window.addEventListener("error", (e) => {
       Object.values(wsRefs.current).forEach(ws => ws.close());
     };
   }, [listboxes]);
+  // Ascultă sincronizarea timerelor via localStorage (evenimentul 'storage')
+  useEffect(() => {
+    // BroadcastChannel (preferat)
+    let bc;
+    if ("BroadcastChannel" in window) {
+      bc = new BroadcastChannel("escalada-timer");
+      bc.onmessage = (ev) => {
+        const { boxId, remaining } = ev.data || {};
+        if (typeof boxId === "number" && typeof remaining === "number") {
+          setControlTimers(prev => ({ ...prev, [boxId]: remaining }));
+        }
+      };
+    }
+    const onStorageTimer = (e) => {
+      if (!e.key || !e.key.startsWith("timer-sync-") || !e.newValue) return;
+      try {
+        const { boxId, remaining } = JSON.parse(e.newValue);
+        if (typeof boxId === "number" && typeof remaining === "number") {
+          setControlTimers(prev => ({ ...prev, [boxId]: remaining }));
+        }
+      } catch {}
+    };
+    window.addEventListener("storage", onStorageTimer);
+    return () => {
+      window.removeEventListener("storage", onStorageTimer);
+      if (bc) bc.close();
+    };
+  }, []);
 
   // Format seconds into "mm:ss"
   const formatTime = (sec) => {
@@ -139,12 +177,19 @@ window.addEventListener("error", (e) => {
     return `${m}:${s}`;
   };
 
-  // convert preset MM:SS în secunde
-  const defaultTimerSec = (() => {
-      const t = localStorage.getItem("climbingTime") || climbingTime || "05:00";
+  const getTimerPreset = (idx) => {
+    const stored = localStorage.getItem(`climbingTime-${idx}`);
+    const lb = listboxesRef.current[idx] || listboxes[idx];
+    const fallback = localStorage.getItem("climbingTime") || climbingTime || "05:00";
+    return stored || (lb && lb.timerPreset) || fallback;
+  };
+
+  // convert preset MM:SS în secunde pentru un box
+  const defaultTimerSec = (idx) => {
+      const t = getTimerPreset(idx);
       const [m, s] = t.split(":").map(Number);
-      return m * 60 + s;
-    })();
+      return (m || 0) * 60 + (s || 0);
+    };
 
     
   
@@ -236,6 +281,7 @@ window.addEventListener("error", (e) => {
 
   const handleUpload = (data) => {
     const { categorie, concurenti, routesCount, holdsCounts } = data;
+    const timerPreset = climbingTime || localStorage.getItem("climbingTime") || "05:00";
     const newIdx = listboxes.length;
     setListboxes(prev => [
       ...prev,
@@ -246,9 +292,11 @@ window.addEventListener("error", (e) => {
         routesCount,
         routeIndex: 1,
         holdsCount: holdsCounts[0],
-        initiated: false
+        initiated: false,
+        timerPreset,
       }
     ]);
+    localStorage.setItem(`climbingTime-${newIdx}`, timerPreset);
     // initialize counters for the new box
     setHoldClicks(prev => ({ ...prev, [newIdx]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [newIdx]: false }));
@@ -332,6 +380,8 @@ window.addEventListener("error", (e) => {
     // 3. Trimite mesaj de (re)inițiere pentru traseul curent prin HTTP+WS
     if (tab && !tab.closed) {
       const lb = listboxes[index];
+      const preset = getTimerPreset(index);
+      localStorage.setItem(`climbingTime-${index}`, preset);
       // send INIT_ROUTE via HTTP+WS
       initRoute(index, lb.routeIndex, lb.holdsCount, lb.concurenti);
     }
@@ -492,7 +542,7 @@ window.addEventListener("error", (e) => {
       <div className="px-2 py-1 text-right text-sm text-gray-600">
         {typeof controlTimers[idx] === 'number'
           ? formatTime(controlTimers[idx])
-          : formatTime(defaultTimerSec)}
+          : formatTime(defaultTimerSec(idx))}
       </div>
     </summary>
 

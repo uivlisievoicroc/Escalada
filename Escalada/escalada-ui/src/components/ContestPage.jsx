@@ -120,6 +120,11 @@ const geomMean = (arr, nRoutes, nCompetitors) => {
 
 const ContestPage = () => {
   const { boxId } = useParams();
+  const getTimerPreset = () => {
+    const specific = localStorage.getItem(`climbingTime-${boxId}`);
+    const global = localStorage.getItem("climbingTime");
+    return specific || global || "05:00";
+  };
   // --- WebSocket logic ---
   const wsRef = useRef(null);
     useEffect(() => {
@@ -145,9 +150,9 @@ const ContestPage = () => {
           if (rafRef.current) cancelAnimationFrame(rafRef.current);
           setRunning(false);
           setEndTimeMs(null);
-          const preset = localStorage.getItem("climbingTime") || "05:00";
+          const preset = getTimerPreset();
           const [m, s] = preset.split(":").map(Number);
-          setTimerSec(m * 60 + s);
+          setTimerSec((m || 0) * 60 + (s || 0));
           return;
         }
         if (msg.type === 'START_TIMER') {
@@ -192,14 +197,13 @@ const ContestPage = () => {
 
   const [remaining, setRemaining] = useState([]);
   const [timerSec, setTimerSec] = useState(() => {
-    const t = localStorage.getItem("climbingTime") || "05:00";
+    const t = getTimerPreset();
     const [m, s] = t.split(":").map(Number);
-    return m * 60 + s;
+    return (m || 0) * 60 + (s || 0);
   });
-  // total preset seconds for the progress ring
-  const preset = localStorage.getItem("climbingTime") || "05:00";
+  const preset = getTimerPreset();
   const [mPreset, sPreset] = preset.split(":").map(Number);
-  const totalSec = mPreset * 60 + sPreset;
+  const totalSec = (mPreset || 0) * 60 + (sPreset || 0);
   const [endTimeMs, setEndTimeMs] = useState(null);
   const rafRef = useRef(null);
   const [ranking, setRanking] = useState(() => ({})); // { nume: [scores…] }
@@ -216,7 +220,6 @@ const ContestPage = () => {
   const [holdsCountsAll, setHoldsCountsAll] = useState([]);
   const BAR_WIDTH = 20;
   const [barHeight, setBarHeight] = useState(500);
-  
 
     // ===== T1 START_TIMER =====
     useEffect(() => {  
@@ -224,9 +227,9 @@ const ContestPage = () => {
         if (
           e.data?.type === "START_TIMER" && +e.data.boxId === +boxId
         ) {
-          const preset = localStorage.getItem("climbingTime") || "05:00";
+          const preset = getTimerPreset();
           const [m, s] = preset.split(":").map(Number);
-          const duration = m * 60 + s;
+          const duration = (m || 0) * 60 + (s || 0);
           setTimerSec(duration);
           setEndTimeMs(Date.now() + duration * 1000);
           setRunning(true);
@@ -397,9 +400,9 @@ const ContestPage = () => {
               cancelAnimationFrame(rafRef.current);
               rafRef.current = null;
             }
-            const preset = localStorage.getItem("climbingTime") || "05:00";
+            const preset = getTimerPreset();
             const [m, s] = preset.split(":").map(Number);
-            const resetSec = m * 60 + s;
+            const resetSec = (m || 0) * 60 + (s || 0);
             setTimerSec(resetSec);
             setRunning(false);
             setEndTimeMs(null);
