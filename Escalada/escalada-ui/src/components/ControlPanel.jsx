@@ -7,7 +7,7 @@ import QRCode from 'react-qr-code';
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import ModalUpload from "./ModalUpload";
 import ModalTimer from "./ModalTimer";
-import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute } from '../utilis/contestActions';
+import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime } from '../utilis/contestActions';
 import ModalModifyScore from "./ModalModifyScore";
 import getWinners from '../utilis/getWinners';
 
@@ -44,6 +44,7 @@ window.addEventListener("error", (e) => {
   };
   const [listboxes, setListboxes] = useState(loadListboxes);
   const [climbingTime, setClimbingTime] = useState(() => localStorage.getItem("climbingTime") || "05:00");
+  const [timeCriterionEnabled, setTimeCriterionEnabled] = useState(() => localStorage.getItem("timeCriterionEnabled") === "on");
   const [timerStates, setTimerStates] = useState({});
   const [activeBoxId, setActiveBoxId] = useState(null);
   const [activeCompetitor, setActiveCompetitor] = useState("");
@@ -51,9 +52,15 @@ window.addEventListener("error", (e) => {
   const [showModifyModal, setShowModifyModal] = useState(false);
   const [editList, setEditList] = useState([]);
   const [editScores, setEditScores] = useState({});
+  const [editTimes, setEditTimes] = useState({});
   const [currentClimbers, setCurrentClimbers] = useState({});
   const [holdClicks, setHoldClicks] = useState({});
   const [usedHalfHold, setUsedHalfHold] = useState({});
+  const [registeredTimes, setRegisteredTimes] = useState({});
+  const registeredTimesRef = useRef(registeredTimes);
+  useEffect(() => {
+    registeredTimesRef.current = registeredTimes;
+  }, [registeredTimes]);
 
 
   // Refs pentru a păstra ultima versiune a stărilor
@@ -82,13 +89,42 @@ window.addEventListener("error", (e) => {
   
   // WebSocket: subscribe to each box channel and mirror updates from JudgePage
   const wsRefs = useRef({});
+  const syncTimeCriterion = (enabled) => {
+    setTimeCriterionEnabled(enabled);
+    localStorage.setItem("timeCriterionEnabled", enabled ? "on" : "off");
+  };
+  const propagateTimeCriterion = async (enabled) => {
+    syncTimeCriterion(enabled);
+    try {
+      await fetch(API_CP, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ boxId: -1, type: 'SET_TIME_CRITERION', timeCriterionEnabled: enabled })
+      });
+    } catch (err) {
+      console.error("Failed to propagate time criterion toggle", err);
+    }
+  };
+  const handleToggleTimeCriterion = () => {
+    propagateTimeCriterion(!timeCriterionEnabled);
+  };
+  // Align backend/global flag with the locally remembered toggle on first load
   useEffect(() => {
+    propagateTimeCriterion(timeCriterionEnabled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const refsSnapshot = wsRefs.current;
     listboxes.forEach((lb, idx) => {
       // dacă deja avem WS pentru acest idx, nu mai deschide altul
       if (!wsRefs.current[idx] || wsRefs.current[idx].readyState === WebSocket.CLOSED) {
         const ws = new WebSocket(`ws://${window.location.hostname}:8000/api/ws/${idx}`);
         ws.onmessage = (ev) => {
           const msg = JSON.parse(ev.data);
+          if (msg.type === 'TIME_CRITERION') {
+            syncTimeCriterion(!!msg.timeCriterionEnabled);
+            return;
+          }
           console.log("📥 WS mesaj primit în ControlPanel:", msg);
           if (+msg.boxId !== idx) return;
 
@@ -101,6 +137,11 @@ window.addEventListener("error", (e) => {
               break;
             case 'RESUME_TIMER':
               setTimerStates(prev => ({ ...prev, [idx]: "running" }));
+              break;
+            case 'TIMER_SYNC':
+              if (typeof msg.remaining === "number") {
+                setControlTimers(prev => ({ ...prev, [idx]: msg.remaining }));
+              }
               break;
             case 'PROGRESS_UPDATE':
               setHoldClicks(prev => {
@@ -116,23 +157,32 @@ window.addEventListener("error", (e) => {
               setHoldClicks(prev => ({ ...prev, [idx]: 0 }));
               setUsedHalfHold(prev => ({ ...prev, [idx]: false }));
               setTimerStates(prev => ({ ...prev, [idx]: "idle" }));
+              clearRegisteredTime(idx);
+              break;
+            case 'REGISTER_TIME':
+              if (typeof msg.registeredTime === "number") {
+                setRegisteredTimes(prev => ({ ...prev, [idx]: msg.registeredTime }));
+              }
               break;
             case 'REQUEST_STATE':
-              const box = listboxesRef.current[idx] || {};
-              (async () => {
-                const snapshot = {
-                  boxId: idx,
-                  type: 'STATE_SNAPSHOT',
-                  initiated: !!box.initiated,
-                  holdsCount: box.holdsCount ?? 0,
-                  currentClimber: currentClimbersRef.current[idx] ?? '',
-                  started: timerStatesRef.current[idx] === "running",
-                  timerState: timerStatesRef.current[idx] || "idle",
-                  holdCount: holdClicksRef.current[idx] ?? 0
-                };
-                wsRefs.current[idx].send(JSON.stringify(snapshot));
+              {
+                const box = listboxesRef.current[idx] || {};
+                (async () => {
+                  const snapshot = {
+                    boxId: idx,
+                    type: 'STATE_SNAPSHOT',
+                    initiated: !!box.initiated,
+                    holdsCount: box.holdsCount ?? 0,
+                    currentClimber: currentClimbersRef.current[idx] ?? '',
+                    started: timerStatesRef.current[idx] === "running",
+                    timerState: timerStatesRef.current[idx] || "idle",
+                    holdCount: holdClicksRef.current[idx] ?? 0,
+                    registeredTime: registeredTimesRef.current[idx],
+                  };
+                  wsRefs.current[idx].send(JSON.stringify(snapshot));
                 })();
-                break;
+              }
+              break;
             case 'STATE_SNAPSHOT':
               setTimerStates(prev => ({ ...prev, [idx]: msg.timerState || (msg.started ? "running" : "idle") }));
               if (typeof msg.holdCount === "number") {
@@ -140,6 +190,15 @@ window.addEventListener("error", (e) => {
               }
               if (typeof msg.currentClimber === "string") {
                 setCurrentClimbers(prev => ({ ...prev, [idx]: msg.currentClimber }));
+              }
+              if (typeof msg.registeredTime === "number") {
+                setRegisteredTimes(prev => ({ ...prev, [idx]: msg.registeredTime }));
+              }
+              if (typeof msg.remaining === "number") {
+                setControlTimers(prev => ({ ...prev, [idx]: msg.remaining }));
+              }
+              if (typeof msg.timeCriterionEnabled === "boolean") {
+                syncTimeCriterion(msg.timeCriterionEnabled);
               }
               break;
             default:
@@ -150,7 +209,7 @@ window.addEventListener("error", (e) => {
       }
     });
     return () => {
-      Object.values(wsRefs.current).forEach(ws => ws.close());
+      Object.values(refsSnapshot).forEach(ws => ws.close());
     };
   }, [listboxes]);
   // Ascultă sincronizarea timerelor via localStorage (evenimentul 'storage')
@@ -172,7 +231,9 @@ window.addEventListener("error", (e) => {
       try {
         const cmd = JSON.parse(e.newValue);
         handleTimerCmd(cmd);
-      } catch {}
+      } catch (err) {
+        console.error("Failed to parse timer-cmd from storage", err);
+      }
     };
     window.addEventListener("storage", onStorageCmd);
     // BroadcastChannel (preferat)
@@ -199,7 +260,9 @@ window.addEventListener("error", (e) => {
             setTimerStates(prev => ({ ...prev, [boxId]: "idle" }));
           }
         }
-      } catch {}
+      } catch (err) {
+        console.error("Failed to parse timer-sync", err);
+      }
     };
     window.addEventListener("storage", onStorageTimer);
     return () => {
@@ -231,6 +294,41 @@ window.addEventListener("error", (e) => {
       return (m || 0) * 60 + (s || 0);
     };
 
+  const readCurrentTimerSec = (idx) => {
+    if (typeof controlTimers[idx] === "number") return controlTimers[idx];
+    const raw = localStorage.getItem(`timer-${idx}`);
+    const parsed = parseInt(raw, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const clearRegisteredTime = (idx) => {
+    setRegisteredTimes(prev => {
+      const { [idx]: _, ...rest } = prev;
+      return rest;
+    });
+    try {
+      localStorage.removeItem(`registeredTime-${idx}`);
+    } catch (err) {
+      console.error("Failed to clear registered time", err);
+    }
+  };
+
+  const handleRegisterTime = (idx) => {
+    if (!timeCriterionEnabled) return;
+    const current = readCurrentTimerSec(idx);
+    if (current == null) {
+      alert("Nu există un timp de înregistrat pentru acest box.");
+      return;
+    }
+    setRegisteredTimes(prev => ({ ...prev, [idx]: current }));
+    try {
+      localStorage.setItem(`registeredTime-${idx}`, current.toString());
+    } catch (err) {
+      console.error("Failed to save registered time", err);
+    }
+    registerTime(idx, current);
+  };
+
     
   
   useEffect(() => {
@@ -255,6 +353,33 @@ window.addEventListener("error", (e) => {
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
+  }, [listboxes]);
+
+  useEffect(() => {
+    const initial = {};
+    listboxes.forEach((_, idx) => {
+      const raw = localStorage.getItem(`registeredTime-${idx}`);
+      const parsed = parseInt(raw, 10);
+      if (!Number.isNaN(parsed)) {
+        initial[idx] = parsed;
+      }
+    });
+    setRegisteredTimes(initial);
+
+    const onStorageRegistered = (e) => {
+      if (!e.key?.startsWith("registeredTime-")) return;
+      const idx = Number(e.key.split("-")[1]);
+      const parsed = parseInt(e.newValue, 10);
+      setRegisteredTimes(prev => {
+        if (Number.isNaN(parsed)) {
+          const { [idx]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [idx]: parsed };
+      });
+    };
+    window.addEventListener("storage", onStorageRegistered);
+    return () => window.removeEventListener("storage", onStorageRegistered);
   }, [listboxes]);
 
   useEffect(() => {
@@ -287,16 +412,44 @@ window.addEventListener("error", (e) => {
   }, [listboxes]);
 
   useEffect(() => {
+    localStorage.setItem("timeCriterionEnabled", timeCriterionEnabled ? "on" : "off");
+  }, [timeCriterionEnabled]);
+
+  useEffect(() => {
+    if (timeCriterionEnabled) return;
+    setRegisteredTimes({});
+    listboxes.forEach((_, idx) => {
+      try {
+        localStorage.removeItem(`registeredTime-${idx}`);
+      } catch (err) {
+        console.error("Failed to clear registered times on toggle off", err);
+      }
+    });
+  }, [timeCriterionEnabled, listboxes]);
+
+  useEffect(() => {
     const onListboxChange = (e) => {
       if (e.key === 'listboxes') {
         try {
           const updated = JSON.parse(e.newValue || '[]');
           setListboxes(updated);
-        } catch {}
+        } catch (err) {
+          console.error("Failed to parse listboxes from storage", err);
+        }
       }
     };
     window.addEventListener('storage', onListboxChange);
     return () => window.removeEventListener('storage', onListboxChange);
+  }, []);
+
+  useEffect(() => {
+    const onStorageToggle = (e) => {
+      if (e.key === "timeCriterionEnabled") {
+        setTimeCriterionEnabled(e.newValue === "on");
+      }
+    };
+    window.addEventListener("storage", onStorageToggle);
+    return () => window.removeEventListener("storage", onStorageToggle);
   }, []);
   
   useEffect(() => {
@@ -368,6 +521,7 @@ window.addEventListener("error", (e) => {
       const { [index]: _, ...rest } = prev;
       return rest;
     });
+    clearRegisteredTime(index);
   };
 
 
@@ -396,6 +550,7 @@ window.addEventListener("error", (e) => {
     setHoldClicks(prev => ({ ...prev, [index]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [index]: false }));
     setTimerStates(prev => ({ ...prev, [index]: "idle" }));
+    clearRegisteredTime(index);
     // reset current climber highlight
     setCurrentClimbers(prev => ({ ...prev, [index]: '' }));
   };
@@ -406,6 +561,7 @@ window.addEventListener("error", (e) => {
       prev.map((lb, i) => i === index ? { ...lb, initiated: true } : lb)
     );
     setTimerStates(prev => ({ ...prev, [index]: "idle" }));
+    clearRegisteredTime(index);
     // 2. Dacă tab‑ul nu există sau s‑a închis → deschide
     let tab = openTabs[index];
     if (!isTabAlive(tab)) {
@@ -447,6 +603,7 @@ window.addEventListener("error", (e) => {
     setHoldClicks(prev => ({ ...prev, [index]: 0 }));
     // reset timer button
     setTimerStates(prev => ({ ...prev, [index]: "idle" }));
+    clearRegisteredTime(index);
     // Send INIT_ROUTE for the next route
     const currentBox = listboxes[index];
     const nextRouteIndex = currentBox.routeIndex + 1;
@@ -460,6 +617,7 @@ window.addEventListener("error", (e) => {
   const handleClickStart = async (boxIdx) => {
     // Deblocare imediată UI
     setTimerStates(prev => ({ ...prev, [boxIdx]: "running" }));
+    clearRegisteredTime(boxIdx);
     try {
       await startTimer(boxIdx);
     } catch (err) {
@@ -480,6 +638,7 @@ window.addEventListener("error", (e) => {
 
   const handleClickResume = async (boxIdx) => {
     setTimerStates(prev => ({ ...prev, [boxIdx]: "running" }));
+    clearRegisteredTime(boxIdx);
     try {
       await resumeTimer(boxIdx);
     } catch (err) {
@@ -505,25 +664,28 @@ window.addEventListener("error", (e) => {
   };
 
   const handleScoreSubmit = async (score, boxIdx) => {
-    await submitScore(boxIdx, score, activeCompetitor);
+    const registeredTime = timeCriterionEnabled ? registeredTimes[boxIdx] : undefined;
+    await submitScore(boxIdx, score, activeCompetitor, registeredTime);
     // Reset UI state for this box
     setHoldClicks(prev => ({ ...prev, [boxIdx]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [boxIdx]: false }));
     setTimerStates(prev => ({ ...prev, [boxIdx]: "idle" }));
     setShowScoreModal(false);
     setActiveBoxId(null);
+    clearRegisteredTime(boxIdx);
   };
 
   const buildEditLists = (boxIdx) => {
     const comp = [];
     const scores = {};
+    const times = {};
     const box = listboxes[boxIdx];
     if (box && box.concurenti) {
       box.concurenti.forEach(c => {
         if (c.marked) comp.push(c.nume);
       });
     }
-    return { comp, scores };
+    return { comp, scores, times };
   };
   const handleCeremony = (category) => {
     // Open the ceremony window immediately on click
@@ -538,7 +700,7 @@ window.addEventListener("error", (e) => {
     }
 
     // Fetch podium from backend
-    getWinners(boxIdx)
+    getWinners(category)
       .then(winners => {
         win.ceremonyWinners = winners;
       })
@@ -580,6 +742,8 @@ window.addEventListener("error", (e) => {
                 localStorage.setItem("climbingTime", time);
                 setClimbingTime(time);
             }}
+            timeCriterionEnabled={timeCriterionEnabled}
+            onToggleTimeCriterion={handleToggleTimeCriterion}
             />
         
       </div>
@@ -665,11 +829,15 @@ window.addEventListener("error", (e) => {
               </button>
               <button
                 className="px-3 py-1 bg-gray-500 text-white rounded disabled:opacity-50"
-                disabled={!lb.initiated}
+                onClick={() => handleRegisterTime(idx)}
+                disabled={!lb.initiated || !timeCriterionEnabled}
               >
                 Register Time
               </button>
             </div>
+          )}
+          {isPaused && timeCriterionEnabled && registeredTimes[idx] !== undefined && (
+            <div className="text-xs text-gray-700 px-1">Registered: {formatTime(registeredTimes[idx])}</div>
           )}
           <div className="flex flex-col items-center gap-1">
             <div className="flex gap-1">
@@ -712,6 +880,7 @@ window.addEventListener("error", (e) => {
               competitor={activeCompetitor}
               initialScore={holdClicks[idx] || 0}
               maxScore={lb.holdsCount}
+              registeredTime={timeCriterionEnabled ? registeredTimes[idx] : undefined}
               onClose={() => setShowScoreModal(false)}
               onSubmit={(score) => handleScoreSubmit(score, idx)}
             />
@@ -720,9 +889,10 @@ window.addEventListener("error", (e) => {
           <button
             className="px-3 py-1 bg-green-600 text-white rounded mt-2 disabled:opacity-50"
             onClick={() => {
-              const { comp, scores } = buildEditLists(idx);
+              const { comp, scores, times } = buildEditLists(idx);
               setEditList(comp);
               setEditScores(scores);
+              setEditTimes(times);
               setShowModifyModal(true);
             }}
             disabled={lb.concurenti.filter(c => c.marked).length === 0}
@@ -733,9 +903,10 @@ window.addEventListener("error", (e) => {
             isOpen={showModifyModal && editList.length > 0}
             competitors={editList}
             scores={editScores}
+            times={editTimes}
             onClose={() => setShowModifyModal(false)}
-            onSubmit={(name, newScore) => {
-              submitScore(idx, newScore, name);
+            onSubmit={(name, newScore, newTime) => {
+              submitScore(idx, newScore, name, newTime);
               setShowModifyModal(false);
             }}
           />
@@ -795,27 +966,3 @@ window.addEventListener("error", (e) => {
 };
 
 export default ControlPanel;
-
-// Remove any duplicate declarations of handleScoreSubmit in this file.
-  // --- CEREMONY handler ---
-  const handleCeremony = (index) => {
-    // Deschide tab pentru ceremonia de premiere
-    let win = openTabs['ceremony'];
-    if (!isTabAlive(win)) {
-      win = window.open('/ceremony.html', '_blank');
-      if (win) openTabs['ceremony'] = win;
-    } else {
-      win.focus();
-    }
-    // Fetch winners for the category
-    const lb = listboxes[index];
-    getWinners(lb.categorie)
-      .then(winners => {
-        win.ceremonyWinners = winners;
-        // Notify ceremony page via postMessage to trigger init()
-        win.postMessage({ winners }, '*');
-      })
-      .catch(err => {
-        alert('Unable to fetch podium: ' + err.message);
-      });
-  };

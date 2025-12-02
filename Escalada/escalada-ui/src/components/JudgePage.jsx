@@ -1,50 +1,97 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, requestState } from '../utilis/contestActions';
+import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, registerTime } from '../utilis/contestActions';
 import ModalScore from './ModalScore';
 import ModalModifyScore from './ModalModifyScore';
 
 const JudgePage = () => {
+  const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
+  const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000`;
+  const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
+
   const { boxId } = useParams();
   const idx = Number(boxId);
   const [initiated, setInitiated] = useState(false);
-  const [started, setStarted] = useState(false);
   const [timerState, setTimerState] = useState("idle");
   const [usedHalfHold, setUsedHalfHold] = useState(false);
   const [currentClimber, setCurrentClimber] = useState("");
   const [holdCount, setHoldCount] = useState(0);
   const [showScoreModal, setShowScoreModal] = useState(false);
   const [maxScore, setMaxScore] = useState(0);
+  const [registeredTime, setRegisteredTime] = useState(() => {
+    const raw = localStorage.getItem(`registeredTime-${idx}`);
+    const parsed = parseInt(raw, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  });
+  const [timeCriterionEnabled, setTimeCriterionEnabled] = useState(() => localStorage.getItem("timeCriterionEnabled") === "on");
+  const [timerSeconds, setTimerSeconds] = useState(() => {
+    const raw = localStorage.getItem(`timer-${idx}`);
+    const parsed = parseInt(raw, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  });
   // WebSocket subscription to backend for real-time updates
   const wsRef = useRef(null);
-  
+
+  const formatTime = (sec) => {
+    if (typeof sec !== "number" || Number.isNaN(sec)) return "—";
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
+
+  const clearRegisteredTime = React.useCallback(() => {
+    setRegisteredTime(null);
+    try {
+      localStorage.removeItem(`registeredTime-${idx}`);
+    } catch (err) {
+      console.error("Failed clearing registered time", err);
+    }
+  }, [idx]);
+
 useEffect(() => {
     // Fetch initial state snapshot (manual reconnection)
     (async () => {
       try {
-        const res = await fetch(`/api/state/${idx}`);
+        const res = await fetch(`${API_BASE}/api/state/${idx}`);
         if (res.ok) {
           const st = await res.json();
           setInitiated(st.initiated);
           setMaxScore(st.holdsCount);
           setCurrentClimber(st.currentClimber);
-          setStarted(st.started);
           setTimerState(st.timerState || (st.started ? "running" : "idle"));
           setHoldCount(st.holdCount);
+          if (typeof st.remaining === "number") {
+            setTimerSeconds(st.remaining);
+            localStorage.setItem(`timer-${idx}`, st.remaining.toString());
+          }
+          if (typeof st.timeCriterionEnabled === "boolean") {
+            setTimeCriterionEnabled(st.timeCriterionEnabled);
+            localStorage.setItem("timeCriterionEnabled", st.timeCriterionEnabled ? "on" : "off");
+          }
         }
       } catch (e) {
         console.error("Error fetching initial state:", e);
       }
     })();
     // Build WebSocket URL based on how the page was loaded
-    const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const WS_HOST = window.location.hostname;
-    const WS_PORT = 8000;            // backend port
-    const WS_URL = `${WS_PROTOCOL}://${WS_HOST}:${WS_PORT}/api/ws/${idx}`;
+    const WS_URL = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}`;
     const ws = new WebSocket(WS_URL);
     // No ws.send REQUEST_STATE on open anymore
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
+      if (msg.type === 'TIME_CRITERION') {
+        setTimeCriterionEnabled(!!msg.timeCriterionEnabled);
+        localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
+        return;
+      }
+      if (msg.type === 'TIMER_SYNC') {
+        if (+msg.boxId !== idx) return;
+        if (typeof msg.remaining === "number") {
+          setTimerSeconds(msg.remaining);
+          localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
+        }
+        return;
+      }
       if (+msg.boxId !== idx) return;
        // --- nou: reacționează la INIT_ROUTE -----------------
       if (msg.type === 'INIT_ROUTE') {
@@ -55,21 +102,17 @@ useEffect(() => {
             ? msg.competitors[0].nume
             : ''
         );
-        setStarted(false);
         setTimerState("idle");
         setUsedHalfHold(false);
         setHoldCount(0);
       }
       if (msg.type === 'START_TIMER') {
-        setStarted(true);
         setTimerState("running");
       }
       if (msg.type === 'STOP_TIMER') {
-        setStarted(false);
         setTimerState("paused");
       }
       if (msg.type === 'RESUME_TIMER') {
-        setStarted(true);
         setTimerState("running");
       }
       if (msg.type === 'PROGRESS_UPDATE') {
@@ -83,19 +126,34 @@ useEffect(() => {
       }
       if (msg.type === 'SUBMIT_SCORE') {
         // reset state identic ControlPanel
-        setStarted(false);
         setTimerState("idle");
         setUsedHalfHold(false);
         setHoldCount(0);
+        clearRegisteredTime();
+      }
+      if (msg.type === 'REGISTER_TIME') {
+        if (typeof msg.registeredTime === "number") {
+          setRegisteredTime(msg.registeredTime);
+        }
       }
       // Handle state snapshot from ControlPanel
       if (msg.type === 'STATE_SNAPSHOT') {
         setInitiated(msg.initiated);
         setMaxScore(msg.holdsCount);
         setCurrentClimber(msg.currentClimber || '');
-        setStarted(msg.started);
         setTimerState(msg.timerState || (msg.started ? "running" : "idle"));
         setHoldCount(msg.holdCount || 0);
+        if (typeof msg.registeredTime === "number") {
+          setRegisteredTime(msg.registeredTime);
+        }
+        if (typeof msg.remaining === "number") {
+          setTimerSeconds(msg.remaining);
+          localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
+        }
+        if (typeof msg.timeCriterionEnabled === "boolean") {
+          setTimeCriterionEnabled(msg.timeCriterionEnabled);
+          localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
+        }
       }
       // Handle ACTIVE_CLIMBER broadcast
       if (msg.type === 'ACTIVE_CLIMBER') {
@@ -104,27 +162,58 @@ useEffect(() => {
     };
     wsRef.current = ws;
     return () => ws.close();
+  }, [idx, API_BASE, WS_PROTOCOL, clearRegisteredTime]);
+
+  useEffect(() => {
+    const syncFromStorage = () => {
+      const rawTimer = localStorage.getItem(`timer-${idx}`);
+      const parsedTimer = parseInt(rawTimer, 10);
+      setTimerSeconds(Number.isNaN(parsedTimer) ? null : parsedTimer);
+      const rawReg = localStorage.getItem(`registeredTime-${idx}`);
+      const parsedReg = parseInt(rawReg, 10);
+      setRegisteredTime(Number.isNaN(parsedReg) ? null : parsedReg);
+      setTimeCriterionEnabled(localStorage.getItem("timeCriterionEnabled") === "on");
+    };
+    syncFromStorage();
+    const onStorage = (e) => {
+      if (e.key === `timer-${idx}`) {
+        const parsed = parseInt(e.newValue, 10);
+        setTimerSeconds(Number.isNaN(parsed) ? null : parsed);
+      }
+      if (e.key === `registeredTime-${idx}`) {
+        const parsed = parseInt(e.newValue, 10);
+        setRegisteredTime(Number.isNaN(parsed) ? null : parsed);
+      }
+      if (e.key === "timeCriterionEnabled") {
+        setTimeCriterionEnabled(e.newValue === "on");
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, [idx]);
 
-
-  
+  useEffect(() => {
+    if (!timeCriterionEnabled) {
+      clearRegisteredTime();
+    }
+  }, [timeCriterionEnabled, clearRegisteredTime]);
+ 
   // Handler for Start Time
   const handleStartTime = () => {
     startTimer(idx);
-    setStarted(true);
     setTimerState("running");
+    clearRegisteredTime();
   };
 
   const handleStopTime = () => {
     stopTimer(idx);
-    setStarted(false);
     setTimerState("paused");
   };
 
   const handleResumeTime = () => {
     resumeTimer(idx);
-    setStarted(true);
     setTimerState("running");
+    clearRegisteredTime();
   };
 
   // Handler for +1 Hold
@@ -137,6 +226,24 @@ useEffect(() => {
   const handleHalfHoldClick = () => {
     updateProgress(idx, 0.1);
     setUsedHalfHold(true);
+  };
+
+  const handleRegisterTime = () => {
+    if (!timeCriterionEnabled || !isPaused) return;
+    const fallback = localStorage.getItem(`timer-${idx}`);
+    const fromStorage = parseInt(fallback, 10);
+    const current = typeof timerSeconds === "number" ? timerSeconds : fromStorage;
+    if (current == null || Number.isNaN(current)) {
+      alert("Nu există un timp de înregistrat pentru acest box.");
+      return;
+    }
+    setRegisteredTime(current);
+    try {
+      localStorage.setItem(`registeredTime-${idx}`, current.toString());
+    } catch (err) {
+      console.error("Failed storing registered time", err);
+    }
+    registerTime(idx, current);
   };
 
   // Handler for Insert Score
@@ -178,11 +285,15 @@ useEffect(() => {
           </button>
           <button
             className="px-3 py-1 bg-gray-500 text-white rounded disabled:opacity-50"
-            disabled={!initiated}
+            onClick={handleRegisterTime}
+            disabled={!initiated || !timeCriterionEnabled}
           >
             Register Time
           </button>
         </div>
+      )}
+      {isPaused && timeCriterionEnabled && registeredTime !== null && (
+        <div className="text-xs text-gray-700">Registered: {formatTime(registeredTime)}</div>
       )}
       <div className="flex gap-2">
       <button
@@ -207,7 +318,7 @@ useEffect(() => {
       <button
         className="mt-10 px-3 py-1 bg-yellow-500 text-white rounded"
         onClick={handleInsertScore}
-        disabled={!initiated || !isRunning}
+        disabled={!initiated || (!isRunning && !isPaused)}
       >
         Insert Score
       </button>
@@ -216,18 +327,22 @@ useEffect(() => {
         competitor={currentClimber}
         initialScore={holdCount}
         maxScore={maxScore}
+        registeredTime={timeCriterionEnabled ? registeredTime : undefined}
         onClose={() => setShowScoreModal(false)}
         onSubmit={(score) => {
-          submitScore(idx, score, currentClimber);
+          const timeToSend = timeCriterionEnabled ? registeredTime : undefined;
+          submitScore(idx, score, currentClimber, timeToSend);
+          clearRegisteredTime();
           setShowScoreModal(false);
           const boxes = JSON.parse(localStorage.getItem("listboxes") || "[]");
-          const box = boxes[idx];
-          const competitorIdx = box.concurenti.findIndex(c => c.nume === currentClimber);
-          if (competitorIdx !== -1) {
-            box.concurenti[competitorIdx].marked = true;
-            localStorage.setItem("listboxes", JSON.stringify(boxes));
+          const box = boxes?.[idx];
+          if (box?.concurenti) {
+            const competitorIdx = box.concurenti.findIndex(c => c.nume === currentClimber);
+            if (competitorIdx !== -1) {
+              box.concurenti[competitorIdx].marked = true;
+              localStorage.setItem("listboxes", JSON.stringify(boxes));
+            }
           }
-          setShowScoreModal(false);
         }}
       />
     </div>

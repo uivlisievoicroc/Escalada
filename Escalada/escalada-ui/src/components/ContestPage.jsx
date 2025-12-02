@@ -1,8 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { ResizableBox } from 'react-resizable';
 import 'react-resizable/css/styles.css';
 import { useParams } from 'react-router-dom';
 // (WebSocket logic moved into component)
+
+const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
+const API_CMD = `${API_PROTOCOL}://${window.location.hostname}:8000/api/cmd`;
 
 // RouteProgress: continuous 5 golden-ratio segments, alternating tilt
 const RouteProgress = ({ holds , current = 0, h = 500, w = 20, tilt = 5 }) => {
@@ -71,34 +74,62 @@ const RouteProgress = ({ holds , current = 0, h = 500, w = 20, tilt = 5 }) => {
 
 // ===== helpers pentru clasament IFSC =====
 /** Returnează { [nume]: [rankPoints…] } şi numărul total de concurenţi */
-const calcRankPointsPerRoute = (scoresByName, routeIdx) => {
+const calcRankPointsPerRoute = (scoresByName, timesByName, routeIdx, useTimeTiebreak) => {
   const rankPoints = {};
   const nRoutes = routeIdx;           // câte rute am până acum
   let nCompetitors = 0;
+
+  const getTimeFor = (name, r) =>
+    timesByName && timesByName[name] && timesByName[name][r] !== undefined
+      ? timesByName[name][r]
+      : undefined;
 
   // pentru fiecare rută (0‑based)
   for (let r = 0; r < nRoutes; r++) {
     // colectează scorurile existente
     const list = Object.entries(scoresByName)
       .filter(([, arr]) => arr[r] !== undefined)
-      .map(([nume, arr]) => ({ nume, score: arr[r] }));
+      .map(([nume, arr]) => ({
+        nume,
+        score: arr[r],
+        time: getTimeFor(nume, r),
+      }));
 
     // sortează descrescător
-    list.sort((a, b) => b.score - a.score);
+    list.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (!useTimeTiebreak) return 0;
+      const ta = typeof a.time === "number" ? a.time : -Infinity;
+      const tb = typeof b.time === "number" ? b.time : -Infinity;
+      if (tb !== ta) return tb - ta;
+      return 0;
+    });
 
     // parcurge şi atribuie rank‑ul cu tie‑handling
     let pos = 1;
     for (let i = 0; i < list.length; ) {
-      const same = list.filter(x => x.score === list[i].score);
+      const current = list[i];
+      let j = i;
+      while (
+        j < list.length &&
+        list[j].score === current.score &&
+        (!useTimeTiebreak ||
+          ( (typeof list[j].time === "number" ? list[j].time : -Infinity) ===
+            (typeof current.time === "number" ? current.time : -Infinity)))
+      ) {
+        j++;
+      }
+      const tieCount = j - i;
       const first = pos;
-      const last = pos + same.length - 1;
+      const last = pos + tieCount - 1;
       const avgRank = (first + last) / 2;      // media aritmetică
-      same.forEach(x => {
+      for (let k = i; k < j; k++) {
+        const x = list[k];
         if (!rankPoints[x.nume]) rankPoints[x.nume] = Array(nRoutes).fill(undefined);
         rankPoints[x.nume][r] = avgRank;
-      });
-      pos += same.length;
-      i += same.length;
+      }
+      pos += tieCount;
+      i = j;
     }
     nCompetitors = Math.max(nCompetitors, list.length);
   }
@@ -120,13 +151,16 @@ const geomMean = (arr, nRoutes, nCompetitors) => {
 
 const ContestPage = () => {
   const { boxId } = useParams();
-  const getTimerPreset = () => {
+  const getTimerPreset = useCallback(() => {
     const specific = localStorage.getItem(`climbingTime-${boxId}`);
     const global = localStorage.getItem("climbingTime");
     return specific || global || "05:00";
-  };
+  }, [boxId]);
+  const [timeCriterionEnabled, setTimeCriterionEnabled] = useState(() => localStorage.getItem("timeCriterionEnabled") === "on");
+
   // --- Broadcast channel pentru sincronizare timere ---
   const timerChannelRef = useRef(null);
+  const lastTimerSyncRef = useRef(null);
   useEffect(() => {
     if ("BroadcastChannel" in window) {
       const ch = new BroadcastChannel("escalada-timer");
@@ -166,7 +200,6 @@ const ContestPage = () => {
           const resetVal = (m || 0) * 60 + (s || 0);
           setTimerSec(resetVal);
           timerSecRef.current = resetVal;
-          setTimerState("idle");
           return;
         }
         if (msg.type === 'START_TIMER') {
@@ -195,13 +228,19 @@ const ContestPage = () => {
         }
         if (msg.type === 'SUBMIT_SCORE') {
           window.postMessage(
-            { type: 'SUBMIT_SCORE', boxId: msg.boxId, score: msg.score, competitor: msg.competitor },
+            {
+              type: 'SUBMIT_SCORE',
+              boxId: msg.boxId,
+              score: msg.score,
+              competitor: msg.competitor,
+              registeredTime: msg.registeredTime,
+            },
             '*'
           );
         }
       };
       return () => ws.close();
-    }, [boxId]);
+    }, [boxId, getTimerPreset]);
   const [preparing, setPreparing] = useState([]);
   
   const [climbing, setClimbing] = useState("");
@@ -209,6 +248,15 @@ const ContestPage = () => {
   useEffect(() => { 
     climbingRef.current = climbing; },
      [climbing]);
+  useEffect(() => {
+    const onToggle = (e) => {
+      if (e.key === "timeCriterionEnabled") {
+        setTimeCriterionEnabled(e.newValue === "on");
+      }
+    };
+    window.addEventListener("storage", onToggle);
+    return () => window.removeEventListener("storage", onToggle);
+  }, [setTimeCriterionEnabled]);
   
   // Sincronizează competitorul curent în localStorage
   useEffect(() => {
@@ -221,7 +269,6 @@ const ContestPage = () => {
     const [m, s] = t.split(":").map(Number);
     return (m || 0) * 60 + (s || 0);
   });
-  const [timerState, setTimerState] = useState("idle");
   const preset = getTimerPreset();
   const [mPreset, sPreset] = preset.split(":").map(Number);
   const totalSec = (mPreset || 0) * 60 + (sPreset || 0);
@@ -240,6 +287,11 @@ const ContestPage = () => {
   useEffect(() => {
     rankingRef.current = ranking;
   }, [ranking]);
+  const [rankingTimes, setRankingTimes] = useState(() => ({})); // { nume: [times…] }
+  const rankingTimesRef = useRef(rankingTimes);
+  useEffect(() => {
+    rankingTimesRef.current = rankingTimes;
+  }, [rankingTimes]);
   const [running, setRunning] = useState(false);
   const [category, setCategory] = useState("");
   const [routeIdx, setRouteIdx] = useState(1);
@@ -250,7 +302,7 @@ const ContestPage = () => {
   const BAR_WIDTH = 20;
   const [barHeight, setBarHeight] = useState(500);
 
-  const broadcastRemaining = (remaining) => {
+  const broadcastRemaining = useCallback((remaining) => {
     try {
       if (timerChannelRef.current) {
         timerChannelRef.current.postMessage({ boxId: Number(boxId), remaining });
@@ -260,10 +312,27 @@ const ContestPage = () => {
           JSON.stringify({ boxId: Number(boxId), remaining, ts: Date.now() })
         );
       }
-    } catch {}
+    } catch (err) {
+      console.error("Failed to broadcast remaining time", err);
+    }
+    if (lastTimerSyncRef.current !== remaining) {
+      lastTimerSyncRef.current = remaining;
+      fetch(API_CMD, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ boxId: Number(boxId), type: 'TIMER_SYNC', remaining })
+      }).catch(err => console.error("Failed to sync timer to backend", err));
+    }
+  }, [boxId]);
+
+  const formatSeconds = (sec) => {
+    if (typeof sec !== "number" || Number.isNaN(sec)) return null;
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
   };
 
-  const startCountdown = () => {
+  const startCountdown = useCallback(() => {
     const presetValue = getTimerPreset();
     const [m, s] = presetValue.split(":").map(Number);
     const duration = (m || 0) * 60 + (s || 0);
@@ -273,13 +342,12 @@ const ContestPage = () => {
     setEndTimeMs(nextEnd);
     endTimeRef.current = nextEnd;
     setRunning(true);
-    setTimerState("running");
     localStorage.setItem(`tick-owner-${boxId}`, window.name || "tick-owner");
     localStorage.setItem(`timer-${boxId}`, duration.toString());
     broadcastRemaining(duration);
-  };
+  }, [broadcastRemaining, boxId, getTimerPreset]);
 
-  const pauseCountdown = () => {
+  const pauseCountdown = useCallback(() => {
     const remaining = endTimeRef.current
       ? Math.max(0, Math.ceil((endTimeRef.current - Date.now()) / 1000))
       : timerSecRef.current;
@@ -294,22 +362,19 @@ const ContestPage = () => {
     timerSecRef.current = remaining;
     localStorage.setItem(`timer-${boxId}`, remaining.toString());
     broadcastRemaining(remaining);
-    setTimerState("paused");
-  };
+  }, [boxId, broadcastRemaining]);
 
-  const resumeCountdown = () => {
+  const resumeCountdown = useCallback(() => {
     const remaining = timerSecRef.current;
     if (remaining <= 0) {
-      setTimerState("idle");
       return;
     }
     const nextEnd = Date.now() + remaining * 1000;
     setEndTimeMs(nextEnd);
     endTimeRef.current = nextEnd;
     setRunning(true);
-    setTimerState("running");
     localStorage.setItem(`tick-owner-${boxId}`, window.name || "tick-owner");
-  };
+  }, [boxId]);
 
     // ===== T1 START_TIMER =====
     useEffect(() => {  
@@ -327,7 +392,7 @@ const ContestPage = () => {
       };
       window.addEventListener("message", onTimerCommand);
       return () => window.removeEventListener("message", onTimerCommand);
-    }, [boxId]);
+    }, [boxId, startCountdown, pauseCountdown, resumeCountdown]);
 
     // (INIT_ROUTE via WebSocket handled above; removed old postMessage INIT_ROUTE handler)
 
@@ -401,7 +466,6 @@ const ContestPage = () => {
           setRunning(false);
           setEndTimeMs(null);
           endTimeRef.current = null;
-          setTimerState("idle");
         }
         broadcastRemaining(next);
       };
@@ -409,7 +473,7 @@ const ContestPage = () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       tick();
       return () => cancelAnimationFrame(rafRef.current);
-    }, [running, endTimeMs]);
+    }, [running, endTimeMs, boxId, broadcastRemaining]);
     
   // T1 initialization
       useEffect(() => {
@@ -425,6 +489,7 @@ const ContestPage = () => {
         setRouteIdx(box.routeIndex || 1);
         setHoldsCount(box.holdsCount);
         setHoldsCountsAll(box.holdsCounts);
+        setCategory(box.categorie || "");
       }, [boxId]);
 
      
@@ -472,16 +537,30 @@ const ContestPage = () => {
           })();
           // setează în state pentru UI
           setRanking(updatedRanking);
+          const submittedTime = typeof e.data.registeredTime === "number" ? e.data.registeredTime : null;
+          const updatedTimes = (() => {
+            const copy = { ...rankingTimesRef.current };
+            if (!copy[competitorName]) copy[competitorName] = [];
+            copy[competitorName][routeIdx - 1] = submittedTime;
+            return copy;
+          })();
+          setRankingTimes(updatedTimes);
           // reset progress bar after score submission
           setCurrentHold(0);
 
           // 2. Mark competitor in localStorage
-          const before = JSON.parse(localStorage.getItem("listboxes") || "[]");
-          const boxBefore = before[boxId];
-          const idx = boxBefore.concurenti.findIndex(c => c.nume === competitorName);
-          if (idx !== -1) {
-            boxBefore.concurenti[idx].marked = true;
-            localStorage.setItem("listboxes", JSON.stringify(before));
+          try {
+            const before = JSON.parse(localStorage.getItem("listboxes") || "[]");
+            const boxBefore = before?.[boxId];
+            if (boxBefore?.concurenti) {
+              const idx = boxBefore.concurenti.findIndex(c => c.nume === competitorName);
+              if (idx !== -1) {
+                boxBefore.concurenti[idx].marked = true;
+                localStorage.setItem("listboxes", JSON.stringify(before));
+              }
+            }
+          } catch (err) {
+            console.error("Failed to update localStorage listboxes after submit", err);
           }
 
           // 3. Advance only if modifying the current competitor who just climbed
@@ -502,25 +581,29 @@ const ContestPage = () => {
             const preset = getTimerPreset();
             const [m, s] = preset.split(":").map(Number);
             const resetSec = (m || 0) * 60 + (s || 0);
-            setTimerSec(resetSec);
-            timerSecRef.current = resetSec;
-            setRunning(false);
-            setEndTimeMs(null);
-            endTimeRef.current = null;
-            setTimerState("idle");
-            localStorage.setItem(`timer-${boxId}`, resetSec.toString());
-            broadcastRemaining(resetSec);
+          setTimerSec(resetSec);
+          timerSecRef.current = resetSec;
+          setRunning(false);
+          setEndTimeMs(null);
+          endTimeRef.current = null;
+          localStorage.setItem(`timer-${boxId}`, resetSec.toString());
+          broadcastRemaining(resetSec);
 
             // 5. Detect end of contest
             const after = JSON.parse(localStorage.getItem("listboxes") || "[]");
-            const boxAfter = after[boxId];
-            const totalRoutes = Number(boxAfter.routesCount);
-            const allMarked = boxAfter.concurenti.every(c => c.marked);
+            const boxAfter = after?.[boxId];
+            const totalRoutes = boxAfter ? Number(boxAfter.routesCount) : routeIdx;
+            const allMarked = boxAfter?.concurenti ? boxAfter.concurenti.every(c => c.marked) : false;
             console.log("End detection:", boxAfter.routeIndex, totalRoutes, allMarked);
-            if (boxAfter.routeIndex === totalRoutes && allMarked) {
+            if (boxAfter && boxAfter.routeIndex === totalRoutes && allMarked) {
               setFinalized(true);
               // Salvează top-3 concurenți în localStorage pentru Award Ceremony
-              const { rankPoints, nCompetitors } = calcRankPointsPerRoute(rankingRef.current, totalRoutes);
+              const { rankPoints, nCompetitors } = calcRankPointsPerRoute(
+                rankingRef.current,
+                rankingTimesRef.current,
+                totalRoutes,
+                timeCriterionEnabled
+              );
               const rows = Object.keys(rankPoints).map(nume => {
                 const rp = rankPoints[nume];
                 const raw = rankingRef.current[nume] || [];
@@ -553,6 +636,8 @@ const ContestPage = () => {
                     route_count: totalRoutes,
                     scores: updatedRanking,
                     clubs: clubMap,
+                    times: rankingTimesRef.current,
+                    use_time_tiebreak: timeCriterionEnabled,
                   }),
                 })
                   .then(r => r.json())
@@ -568,7 +653,7 @@ const ContestPage = () => {
         };
         window.addEventListener("message", handleMessageT1);
         return () => window.removeEventListener("message", handleMessageT1);
-      }, [boxId, climbing, preparing, remaining]);
+      }, [boxId, climbing, preparing, remaining, timeCriterionEnabled, broadcastRemaining, getTimerPreset, routeIdx]);
       
   const rankClass = (rank) => {
     if (!finalized) return "";
@@ -676,12 +761,18 @@ const ContestPage = () => {
             {/* Rows */}
             <div className="flex-1 overflow-y-auto">
             {(() => {
-              const { rankPoints, nCompetitors } = calcRankPointsPerRoute(ranking, routeIdx);
+              const { rankPoints, nCompetitors } = calcRankPointsPerRoute(
+                ranking,
+                rankingTimes,
+                routeIdx,
+                timeCriterionEnabled
+              );
               const rows = Object.keys(rankPoints).map(nume => {
                 const rp = rankPoints[nume];
                 const raw = ranking[nume] || [];
+                const rawTimes = rankingTimes[nume] || [];
                 const total = geomMean(rp, routeIdx, nCompetitors);
-                return { nume, rp, raw, total };
+                return { nume, rp, raw, rawTimes, total };
               });
               rows.sort((a, b) => a.total - b.total);
 
@@ -703,13 +794,22 @@ const ContestPage = () => {
                   style={{ gridTemplateColumns: `1fr repeat(${routeIdx}, 1fr) 80px` }}
                 >
                   <span className="px-2 text-4xl font-semibold">{row.rank}. {row.nume}</span>
-                  {Array.from({ length: routeIdx }).map((_, i) => (
-                    <span key={i} className="px-2 text-right">
-                      {row.raw[i] !== undefined
-                        ? (holdsCountsAll[i] && row.raw[i] === Number(holdsCountsAll[i]) ? "Top" : row.raw[i].toFixed(1))
-                        : "—"}
-                    </span>
-                  ))}
+                  {Array.from({ length: routeIdx }).map((_, i) => {
+                    const scoreVal = row.raw[i];
+                    const timeVal = row.rawTimes[i];
+                    return (
+                      <span key={i} className="px-2 text-right flex flex-col items-end leading-tight">
+                        {scoreVal !== undefined
+                          ? (holdsCountsAll[i] && scoreVal === Number(holdsCountsAll[i]) ? "Top" : scoreVal.toFixed(1))
+                          : "—"}
+                        {timeVal != null && timeCriterionEnabled && (
+                          <span className="text-base text-gray-600">
+                            {formatSeconds(timeVal)}
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })}
                   <span className="px-2 text-right font-mono text-red-500">{row.total.toFixed(3)}</span>
                 </div>
               ));

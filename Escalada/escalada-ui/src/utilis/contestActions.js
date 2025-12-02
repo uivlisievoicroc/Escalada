@@ -3,12 +3,14 @@ const API = `${API_PROTOCOL}://${window.location.hostname}:8000/api/cmd`;
 // src/utils/contestActions.js
 
 export async function startTimer(boxId) {
-    try {
-      localStorage.setItem(
-        "timer-cmd",
-        JSON.stringify({ type: "START_TIMER", boxId, ts: Date.now() })
-      );
-    } catch {}
+  try {
+    localStorage.setItem(
+      "timer-cmd",
+      JSON.stringify({ type: "START_TIMER", boxId, ts: Date.now() })
+    );
+  } catch (err) {
+    console.error("Failed to persist START_TIMER command", err);
+  }
     await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -17,12 +19,14 @@ export async function startTimer(boxId) {
   }
 
   export async function stopTimer(boxId) {
-    try {
-      localStorage.setItem(
-        "timer-cmd",
-        JSON.stringify({ type: "STOP_TIMER", boxId, ts: Date.now() })
-      );
-    } catch {}
+  try {
+    localStorage.setItem(
+      "timer-cmd",
+      JSON.stringify({ type: "STOP_TIMER", boxId, ts: Date.now() })
+    );
+  } catch (err) {
+    console.error("Failed to persist STOP_TIMER command", err);
+  }
     await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -30,13 +34,15 @@ export async function startTimer(boxId) {
     });
   }
 
-  export async function resumeTimer(boxId) {
-    try {
-      localStorage.setItem(
-        "timer-cmd",
-        JSON.stringify({ type: "RESUME_TIMER", boxId, ts: Date.now() })
-      );
-    } catch {}
+export async function resumeTimer(boxId) {
+  try {
+    localStorage.setItem(
+      "timer-cmd",
+      JSON.stringify({ type: "RESUME_TIMER", boxId, ts: Date.now() })
+    );
+  } catch (err) {
+    console.error("Failed to persist RESUME_TIMER command", err);
+  }
     await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -59,11 +65,29 @@ export async function startTimer(boxId) {
       body: JSON.stringify({ boxId, type: 'REQUEST_ACTIVE_COMPETITOR' })
     });
   }
-export async function submitScore(boxId, score, competitor) {
+export async function submitScore(boxId, score, competitor, registeredTime) {
   await fetch(API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ boxId, type: 'SUBMIT_SCORE', score, competitor }),
+    body: JSON.stringify({
+      boxId,
+      type: 'SUBMIT_SCORE',
+      score,
+      competitor,
+      registeredTime: typeof registeredTime === "number" ? registeredTime : undefined,
+    }),
+  });
+}
+
+export async function registerTime(boxId, registeredTime) {
+  await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      boxId,
+      type: 'REGISTER_TIME',
+      registeredTime,
+    }),
   });
 }
 

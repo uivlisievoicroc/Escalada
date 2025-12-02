@@ -7,6 +7,7 @@ from starlette.websockets import WebSocket
 from typing import Dict
 from fastapi import HTTPException
 state_map: Dict[int, dict] = {}
+time_criterion_enabled: bool = False
 
 
 router = APIRouter()
@@ -23,6 +24,7 @@ class Cmd(BaseModel):
     # for SUBMIT_SCORE
     score: float | None = None
     competitor: str | None = None
+    registeredTime: float | None = None
 
     # for INIT_ROUTE
     routeIndex: int | None = None
@@ -30,9 +32,21 @@ class Cmd(BaseModel):
     competitors: list[dict] | None = None
     categorie: str | None = None
 
+    # for SET_TIME_CRITERION
+    timeCriterionEnabled: bool | None = None
+
+    # for TIMER_SYNC
+    remaining: float | None = None
+
 @router.post("/cmd")
 async def cmd(cmd: Cmd):
     print(f"Backend received cmd: {cmd}")
+    # Toggle global time criterion without touching per‑box state
+    if cmd.type == "SET_TIME_CRITERION":
+        global time_criterion_enabled
+        time_criterion_enabled = bool(cmd.timeCriterionEnabled)
+        await _broadcast_time_criterion()
+        return {"status": "ok"}
     # Update server-side state snapshot
     sm = state_map.setdefault(cmd.boxId, {
         "initiated": False,
@@ -43,7 +57,9 @@ async def cmd(cmd: Cmd):
         "holdCount": 0.0,
         "routeIndex": 1,
         "competitors": [],
-        "categorie": ""
+        "categorie": "",
+        "lastRegisteredTime": None,
+        "remaining": None,
     })
     if cmd.type == "INIT_ROUTE":
         sm["initiated"] = True
@@ -54,25 +70,36 @@ async def cmd(cmd: Cmd):
         sm["started"] = False
         sm["timerState"] = "idle"
         sm["holdCount"] = 0.0
+        sm["lastRegisteredTime"] = None
+        sm["remaining"] = None
         if cmd.categorie:
             sm["categorie"] = cmd.categorie
     elif cmd.type == "START_TIMER":
         sm["started"] = True
         sm["timerState"] = "running"
+        sm["lastRegisteredTime"] = None
+        sm["remaining"] = None
     elif cmd.type == "STOP_TIMER":
         sm["started"] = False
         sm["timerState"] = "paused"
     elif cmd.type == "RESUME_TIMER":
         sm["started"] = True
         sm["timerState"] = "running"
+        sm["lastRegisteredTime"] = None
     elif cmd.type == "PROGRESS_UPDATE":
         delta = cmd.delta or 1
         new_count = (int(sm["holdCount"]) + 1) if delta == 1 else round(sm["holdCount"] + delta, 1)
         sm["holdCount"] = new_count
+    elif cmd.type == "REGISTER_TIME":
+        sm["lastRegisteredTime"] = cmd.registeredTime
+    elif cmd.type == "TIMER_SYNC":
+        sm["remaining"] = cmd.remaining
     elif cmd.type == "SUBMIT_SCORE":
         sm["started"] = False
         sm["timerState"] = "idle"
         sm["holdCount"] = 0.0
+        sm["lastRegisteredTime"] = cmd.registeredTime
+        sm["remaining"] = None
         # marchează competitorul și mută la următorul
         if sm.get("competitors"):
             for comp in sm["competitors"]:
@@ -140,6 +167,9 @@ def _build_snapshot(box_id: int, state: dict) -> dict:
         "holdCount": state.get("holdCount", 0.0),
         "competitors": state.get("competitors", []),
         "categorie": state.get("categorie", ""),
+        "registeredTime": state.get("lastRegisteredTime"),
+        "remaining": state.get("remaining"),
+        "timeCriterionEnabled": time_criterion_enabled,
     }
 
 
@@ -154,3 +184,16 @@ async def _send_state_snapshot(box_id: int, targets: set[WebSocket] | None = Non
             await ws.send_json(payload)
         except Exception:
             sockets.discard(ws)
+
+
+async def _broadcast_time_criterion():
+    payload = {
+        "type": "TIME_CRITERION",
+        "timeCriterionEnabled": time_criterion_enabled,
+    }
+    for sockets in channels.values():
+        for ws in list(sockets):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                sockets.discard(ws)

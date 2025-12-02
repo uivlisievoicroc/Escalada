@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from "react";
 
-const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, onClose, onSubmit }) => {
+const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, registeredTime, onClose, onSubmit }) => {
   const [score, setScore] = useState(initialScore.toString());
+  const formatTime = (sec) => {
+    if (typeof sec !== "number" || Number.isNaN(sec)) return "";
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -43,8 +49,11 @@ const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, onClose, o
     <div className="absolute bg-gray-500 bg-opacity-75 flex items-center justify-center">
       <div className="bg-white p-4 rounded shadow-md w-64">
         <h2 className="text-lg font-semibold mb-3">
-        Insert score for {competitor} (0 – {maxScore})
+          Insert score for {competitor} (0 - {maxScore})
         </h2>
+        {registeredTime != null && (
+          <p className="text-sm text-gray-600 mb-2">Registered time: {formatTime(registeredTime)}</p>
+        )}
         <form onSubmit={handleSubmit}>
           <input
             type="number"

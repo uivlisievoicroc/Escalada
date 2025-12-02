@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-const ModalTimer = ({ isOpen, onClose, onSet }) => {
+const ModalTimer = ({ isOpen, onClose, onSet, timeCriterionEnabled = false, onToggleTimeCriterion }) => {
   const [time, setTime] = useState("");
 
   const handleSubmit = (e) => {
@@ -24,6 +24,15 @@ const ModalTimer = ({ isOpen, onClose, onSet }) => {
           className="w-full border border-gray-300 p-2 rounded"
           required
         />
+        {typeof onToggleTimeCriterion === "function" && (
+          <button
+            type="button"
+            onClick={onToggleTimeCriterion}
+            className="w-full px-3 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 transition"
+          >
+            Set time as the second criterion ({timeCriterionEnabled ? "On" : "Off"})
+          </button>
+        )}
         <div className="flex justify-end space-x-2">
           <button
             type="button"
