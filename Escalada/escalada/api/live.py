@@ -31,6 +31,7 @@ class Cmd(BaseModel):
     holdsCount: int | None = None
     competitors: list[dict] | None = None
     categorie: str | None = None
+    timerPreset: str | None = None
 
     # for SET_TIME_CRITERION
     timeCriterionEnabled: bool | None = None
@@ -60,6 +61,8 @@ async def cmd(cmd: Cmd):
         "categorie": "",
         "lastRegisteredTime": None,
         "remaining": None,
+        "timerPreset": None,
+        "timerPresetSec": None,
     })
     if cmd.type == "INIT_ROUTE":
         sm["initiated"] = True
@@ -74,6 +77,9 @@ async def cmd(cmd: Cmd):
         sm["remaining"] = None
         if cmd.categorie:
             sm["categorie"] = cmd.categorie
+        if cmd.timerPreset:
+            sm["timerPreset"] = cmd.timerPreset
+            sm["timerPresetSec"] = _parse_timer_preset(cmd.timerPreset)
     elif cmd.type == "START_TIMER":
         sm["started"] = True
         sm["timerState"] = "running"
@@ -175,6 +181,8 @@ def _build_snapshot(box_id: int, state: dict) -> dict:
         "registeredTime": state.get("lastRegisteredTime"),
         "remaining": state.get("remaining"),
         "timeCriterionEnabled": time_criterion_enabled,
+        "timerPreset": state.get("timerPreset"),
+        "timerPresetSec": state.get("timerPresetSec"),
     }
 
 
@@ -189,6 +197,16 @@ async def _send_state_snapshot(box_id: int, targets: set[WebSocket] | None = Non
             await ws.send_json(payload)
         except Exception:
             sockets.discard(ws)
+
+
+def _parse_timer_preset(preset: str | None) -> int | None:
+    if not preset:
+        return None
+    try:
+        minutes, seconds = (preset or "").split(":")
+        return int(minutes or 0) * 60 + int(seconds or 0)
+    except Exception:
+        return None
 
 
 async def _broadcast_time_criterion():

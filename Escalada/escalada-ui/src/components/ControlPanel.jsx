@@ -180,6 +180,8 @@ window.addEventListener("error", (e) => {
                     timerState: timerStatesRef.current[idx] || "idle",
                     holdCount: holdClicksRef.current[idx] ?? 0,
                     registeredTime: registeredTimesRef.current[idx],
+                    timerPreset: getTimerPreset(idx),
+                    timerPresetSec: defaultTimerSec(idx),
                   };
                   wsRefs.current[idx].send(JSON.stringify(snapshot));
                 })();
@@ -589,7 +591,7 @@ window.addEventListener("error", (e) => {
       const preset = getTimerPreset(index);
       localStorage.setItem(`climbingTime-${index}`, preset);
       // send INIT_ROUTE via HTTP+WS
-      initRoute(index, lb.routeIndex, lb.holdsCount, lb.concurenti);
+      initRoute(index, lb.routeIndex, lb.holdsCount, lb.concurenti, preset);
     }
   };
  
@@ -626,7 +628,7 @@ window.addEventListener("error", (e) => {
     if (nextRouteIndex <= currentBox.routesCount) {
       const nextHoldsCount = currentBox.holdsCounts[nextRouteIndex - 1];
       const nextCompetitors = currentBox.concurenti.map(c => ({ ...c, marked: false }));
-      initRoute(index, nextRouteIndex, nextHoldsCount, nextCompetitors);
+      initRoute(index, nextRouteIndex, nextHoldsCount, nextCompetitors, getTimerPreset(index));
     }
   };
   // --- handlere globale pentru butoane optimiste ------------------

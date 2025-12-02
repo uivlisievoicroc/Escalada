@@ -29,6 +29,7 @@ const JudgePage = () => {
     const parsed = parseInt(raw, 10);
     return Number.isNaN(parsed) ? null : parsed;
   });
+  const [serverTimerPresetSec, setServerTimerPresetSec] = useState(null);
   const getTimerPreset = () => {
     const specific = localStorage.getItem(`climbingTime-${idx}`);
     const global = localStorage.getItem("climbingTime");
@@ -38,7 +39,12 @@ const JudgePage = () => {
     const [m, s] = (preset || "").split(":").map(Number);
     return (m || 0) * 60 + (s || 0);
   };
-  const totalDurationSec = () => presetToSec(getTimerPreset());
+  const totalDurationSec = () => {
+    if (typeof serverTimerPresetSec === "number" && !Number.isNaN(serverTimerPresetSec)) {
+      return serverTimerPresetSec;
+    }
+    return presetToSec(getTimerPreset());
+  };
   // WebSocket subscription to backend for real-time updates
   const wsRef = useRef(null);
 
@@ -47,6 +53,20 @@ const JudgePage = () => {
     const m = Math.floor(sec / 60).toString().padStart(2, "0");
     const s = (sec % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
+  };
+
+  const applyTimerPresetSnapshot = (snapshot) => {
+    if (!snapshot) return;
+    if (typeof snapshot.timerPresetSec === "number") {
+      setServerTimerPresetSec(snapshot.timerPresetSec);
+      return;
+    }
+    if (typeof snapshot.timerPreset === "string") {
+      const parsedPreset = presetToSec(snapshot.timerPreset);
+      if (!Number.isNaN(parsedPreset)) {
+        setServerTimerPresetSec(parsedPreset);
+      }
+    }
   };
 
   const clearRegisteredTime = React.useCallback(() => {
@@ -70,6 +90,15 @@ useEffect(() => {
           setCurrentClimber(st.currentClimber);
           setTimerState(st.timerState || (st.started ? "running" : "idle"));
           setHoldCount(st.holdCount);
+          applyTimerPresetSnapshot(st);
+          if (typeof st.registeredTime === "number") {
+            setRegisteredTime(st.registeredTime);
+            try {
+              localStorage.setItem(`registeredTime-${idx}`, st.registeredTime.toString());
+            } catch (err) {
+              console.error("Failed to persist registered time locally", err);
+            }
+          }
           if (typeof st.remaining === "number") {
             setTimerSeconds(st.remaining);
             localStorage.setItem(`timer-${idx}`, st.remaining.toString());
@@ -115,6 +144,7 @@ useEffect(() => {
         setTimerState("idle");
         setUsedHalfHold(false);
         setHoldCount(0);
+        applyTimerPresetSnapshot(msg);
       }
       if (msg.type === 'START_TIMER') {
         setTimerState("running");
@@ -144,6 +174,11 @@ useEffect(() => {
       if (msg.type === 'REGISTER_TIME') {
         if (typeof msg.registeredTime === "number") {
           setRegisteredTime(msg.registeredTime);
+          try {
+            localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
+          } catch (err) {
+            console.error("Failed to persist registered time from WS", err);
+          }
         }
       }
       // Handle state snapshot from ControlPanel
@@ -153,8 +188,14 @@ useEffect(() => {
         setCurrentClimber(msg.currentClimber || '');
         setTimerState(msg.timerState || (msg.started ? "running" : "idle"));
         setHoldCount(msg.holdCount || 0);
+        applyTimerPresetSnapshot(msg);
         if (typeof msg.registeredTime === "number") {
           setRegisteredTime(msg.registeredTime);
+          try {
+            localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
+          } catch (err) {
+            console.error("Failed to persist registered time from snapshot", err);
+          }
         }
         if (typeof msg.remaining === "number") {
           setTimerSeconds(msg.remaining);
@@ -207,6 +248,41 @@ useEffect(() => {
       clearRegisteredTime();
     }
   }, [timeCriterionEnabled, clearRegisteredTime]);
+
+  const pullLatestState = async () => {
+    let snapshot = {};
+    try {
+      const res = await fetch(`${API_BASE}/api/state/${idx}`);
+      if (res.ok) {
+        snapshot = await res.json();
+        applyTimerPresetSnapshot(snapshot);
+        if (typeof snapshot.remaining === "number") {
+          setTimerSeconds(snapshot.remaining);
+          localStorage.setItem(`timer-${idx}`, snapshot.remaining.toString());
+        }
+        if (typeof snapshot.registeredTime === "number") {
+          setRegisteredTime(snapshot.registeredTime);
+          localStorage.setItem(`registeredTime-${idx}`, snapshot.registeredTime.toString());
+        }
+        if (typeof snapshot.timeCriterionEnabled === "boolean") {
+          setTimeCriterionEnabled(snapshot.timeCriterionEnabled);
+          localStorage.setItem("timeCriterionEnabled", snapshot.timeCriterionEnabled ? "on" : "off");
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch latest state snapshot", err);
+    }
+    return snapshot;
+  };
+
+  const resolveRemainingSeconds = async () => {
+    const snapshot = await pullLatestState();
+    const fallback = typeof timerSeconds === "number"
+      ? timerSeconds
+      : parseInt(localStorage.getItem(`timer-${idx}`) || "", 10);
+    if (typeof snapshot.remaining === "number") return snapshot.remaining;
+    return Number.isNaN(fallback) ? null : fallback;
+  };
  
   // Handler for Start Time
   const handleStartTime = () => {
@@ -238,11 +314,9 @@ useEffect(() => {
     setUsedHalfHold(true);
   };
 
-  const handleRegisterTime = () => {
+  const handleRegisterTime = async () => {
     if (!timeCriterionEnabled || !isPaused) return;
-    const fallback = localStorage.getItem(`timer-${idx}`);
-    const fromStorage = parseInt(fallback, 10);
-    const current = typeof timerSeconds === "number" ? timerSeconds : fromStorage;
+    const current = await resolveRemainingSeconds();
     if (current == null || Number.isNaN(current)) {
       alert("Nu există un timp de înregistrat pentru acest box.");
       return;
@@ -340,27 +414,32 @@ useEffect(() => {
         maxScore={maxScore}
         registeredTime={timeCriterionEnabled ? registeredTime : undefined}
         onClose={() => setShowScoreModal(false)}
-        onSubmit={(score) => {
-          const timeToSend = (() => {
-            if (!timeCriterionEnabled) return undefined;
-            if (typeof registeredTime === "number") return registeredTime;
-            const raw = localStorage.getItem(`registeredTime-${idx}`);
-            const parsed = parseInt(raw, 10);
-            if (!Number.isNaN(parsed)) return parsed;
-            // Fallback: calculează automat din timerul curent
-            const fallbackCurrent =
-              typeof timerSeconds === "number"
-                ? timerSeconds
-                : parseInt(localStorage.getItem(`timer-${idx}`) || "", 10);
-            if (!Number.isNaN(fallbackCurrent)) {
-              const elapsed = Math.max(0, totalDurationSec() - fallbackCurrent);
-              localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
-              setRegisteredTime(elapsed);
-              return elapsed;
+        onSubmit={async (score) => {
+          let timeToSend;
+          if (timeCriterionEnabled) {
+            if (typeof registeredTime === "number") {
+              timeToSend = registeredTime;
+            } else {
+              const raw = localStorage.getItem(`registeredTime-${idx}`);
+              const parsed = parseInt(raw, 10);
+              if (!Number.isNaN(parsed)) {
+                timeToSend = parsed;
+              } else {
+                const current = await resolveRemainingSeconds();
+                if (current != null && !Number.isNaN(current)) {
+                  const elapsed = Math.max(0, totalDurationSec() - current);
+                  timeToSend = elapsed;
+                  try {
+                    localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
+                  } catch (err) {
+                    console.error("Failed to persist computed registered time", err);
+                  }
+                  setRegisteredTime(elapsed);
+                }
+              }
             }
-            return undefined;
-          })();
-          submitScore(idx, score, currentClimber, timeToSend);
+          }
+          await submitScore(idx, score, currentClimber, timeToSend);
           clearRegisteredTime();
           setShowScoreModal(false);
           const boxes = JSON.parse(localStorage.getItem("listboxes") || "[]");

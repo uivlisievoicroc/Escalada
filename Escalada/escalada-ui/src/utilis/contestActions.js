@@ -94,11 +94,11 @@ export async function registerTime(boxId, registeredTime) {
 /**
  * Initialize a new route in the contest
  */
-export async function initRoute(boxId, routeIndex, holdsCount, competitors) {
+export async function initRoute(boxId, routeIndex, holdsCount, competitors, timerPreset) {
   await fetch(API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ boxId, type: 'INIT_ROUTE', routeIndex, holdsCount, competitors }),
+    body: JSON.stringify({ boxId, type: 'INIT_ROUTE', routeIndex, holdsCount, competitors, timerPreset }),
   });
 }
 
