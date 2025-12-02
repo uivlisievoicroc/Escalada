@@ -74,10 +74,10 @@ const RouteProgress = ({ holds , current = 0, h = 500, w = 20, tilt = 5 }) => {
 
 // ===== helpers pentru clasament IFSC =====
 /** Returnează { [nume]: [rankPoints…] } şi numărul total de concurenţi */
-const calcRankPointsPerRoute = (scoresByName, timesByName, routeIdx, useTimeTiebreak) => {
-  const rankPoints = {};
-  const nRoutes = routeIdx;           // câte rute am până acum
-  let nCompetitors = 0;
+  const calcRankPointsPerRoute = (scoresByName, timesByName, routeIdx, useTimeTiebreak) => {
+    const rankPoints = {};
+    const nRoutes = routeIdx;           // câte rute am până acum
+    let nCompetitors = 0;
 
   const getTimeFor = (name, r) =>
     timesByName && timesByName[name] && timesByName[name][r] !== undefined
@@ -99,9 +99,9 @@ const calcRankPointsPerRoute = (scoresByName, timesByName, routeIdx, useTimeTieb
     list.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if (!useTimeTiebreak) return 0;
-      const ta = typeof a.time === "number" ? a.time : -Infinity;
-      const tb = typeof b.time === "number" ? b.time : -Infinity;
-      if (tb !== ta) return tb - ta;
+      const ta = typeof a.time === "number" ? a.time : Infinity;
+      const tb = typeof b.time === "number" ? b.time : Infinity;
+      if (ta !== tb) return ta - tb; // timp mai mic = mai bun
       return 0;
     });
 
@@ -114,8 +114,8 @@ const calcRankPointsPerRoute = (scoresByName, timesByName, routeIdx, useTimeTieb
         j < list.length &&
         list[j].score === current.score &&
         (!useTimeTiebreak ||
-          ( (typeof list[j].time === "number" ? list[j].time : -Infinity) ===
-            (typeof current.time === "number" ? current.time : -Infinity)))
+          ( (typeof list[j].time === "number" ? list[j].time : Infinity) ===
+            (typeof current.time === "number" ? current.time : Infinity)))
       ) {
         j++;
       }
@@ -537,7 +537,14 @@ const ContestPage = () => {
           })();
           // setează în state pentru UI
           setRanking(updatedRanking);
-          const submittedTime = typeof e.data.registeredTime === "number" ? e.data.registeredTime : null;
+          const submittedTime = (() => {
+            if (typeof e.data.registeredTime === "number") return e.data.registeredTime;
+            if (typeof e.data.registeredTime === "string") {
+              const parsed = parseFloat(e.data.registeredTime);
+              return Number.isNaN(parsed) ? null : parsed;
+            }
+            return null;
+          })();
           const updatedTimes = (() => {
             const copy = { ...rankingTimesRef.current };
             if (!copy[competitorName]) copy[competitorName] = [];
@@ -545,6 +552,12 @@ const ContestPage = () => {
             return copy;
           })();
           setRankingTimes(updatedTimes);
+          try {
+            localStorage.setItem(`ranking-${boxId}`, JSON.stringify(updatedRanking));
+            localStorage.setItem(`rankingTimes-${boxId}`, JSON.stringify(updatedTimes));
+          } catch (err) {
+            console.error("Failed to persist rankings", err);
+          }
           // reset progress bar after score submission
           setCurrentHold(0);
 
@@ -599,14 +612,14 @@ const ContestPage = () => {
               setFinalized(true);
               // Salvează top-3 concurenți în localStorage pentru Award Ceremony
               const { rankPoints, nCompetitors } = calcRankPointsPerRoute(
-                rankingRef.current,
-                rankingTimesRef.current,
+                updatedRanking,
+                updatedTimes,
                 totalRoutes,
                 timeCriterionEnabled
               );
               const rows = Object.keys(rankPoints).map(nume => {
                 const rp = rankPoints[nume];
-                const raw = rankingRef.current[nume] || [];
+                const raw = updatedRanking[nume] || [];
                 const total = geomMean(rp, totalRoutes, nCompetitors);
                 return { nume, rp, raw, total };
               });
@@ -624,8 +637,9 @@ const ContestPage = () => {
                 console.log("📦 Payload trimis la backend (setTimeout):", {
                   categorie: boxAfter.categorie,
                   route_count: totalRoutes,
-                  scores: rankingRef.current,
+                  scores: updatedRanking,
                   clubs: clubMap,
+                  times: updatedTimes,
                 });
 
                 fetch("http://127.0.0.1:8000/api/save_ranking", {
@@ -636,7 +650,7 @@ const ContestPage = () => {
                     route_count: totalRoutes,
                     scores: updatedRanking,
                     clubs: clubMap,
-                    times: rankingTimesRef.current,
+                    times: updatedTimes,
                     use_time_tiebreak: timeCriterionEnabled,
                   }),
                 })

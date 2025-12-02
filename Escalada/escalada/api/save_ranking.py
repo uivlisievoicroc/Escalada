@@ -28,12 +28,17 @@ class RankingIn(BaseModel):
 def save_ranking(payload: RankingIn):
     cat_dir = Path("escalada/clasamente") / payload.categorie
     cat_dir.mkdir(parents=True, exist_ok=True)
-    times = payload.times or {}
+    raw_times = payload.times or {}
+    # normalize toate timpiile la secunde (int) sau None
+    times = {
+        name: [ _to_seconds(t) for t in arr ]
+        for name, arr in raw_times.items()
+    }
     use_time = payload.use_time_tiebreak
 
     def time_for(name: str, idx: int):
         arr = times.get(name, [])
-        return arr[idx] if idx < len(arr) else None
+        return _to_seconds(arr[idx]) if idx < len(arr) else None
 
     # ---------- excel + pdf TOTAL ----------
     overall_df = _build_overall_df(payload)
@@ -55,7 +60,7 @@ def save_ranking(payload: RankingIn):
             route_list,
             key=lambda x: (
                 -x[1] if x[1] is not None else math.inf,
-                -(x[2]) if (use_time and x[2] is not None) else (math.inf if use_time else 0)
+                x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0)
             )
         )
 
@@ -102,7 +107,7 @@ def save_ranking(payload: RankingIn):
                 "Name": name,
                 "Club": payload.clubs.get(name, ""),
                 "Score": score,
-                **({"Time": tm} if use_time else {}),
+                **({"Time": _format_time(tm)} if use_time else {}),
                 "Points": points.get(name)
             }
             for i, (name, score, tm) in enumerate(route_list_sorted)
@@ -143,7 +148,7 @@ def _build_overall_df(p: RankingIn) -> pd.DataFrame:
             scored.sort(
                 key=lambda x: (
                     -x[1],
-                    -(x[2]) if (use_time and x[2] is not None) else (math.inf if use_time else 0)
+                    x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0)
                 )
             )
 
@@ -180,7 +185,7 @@ def _build_overall_df(p: RankingIn) -> pd.DataFrame:
         for idx in range(n):
             row.append(arr[idx] if idx < len(arr) else None)
             if use_time:
-                row.append(time_row[idx] if idx < len(time_row) else None)
+                row.append(_format_time(time_row[idx] if idx < len(time_row) else None))
         row.append(total)
         data.append(row)
 
@@ -212,8 +217,41 @@ def _build_by_route_df(p: RankingIn) -> pd.DataFrame:
             score = arr[r] if r < len(arr) else None
             t_arr = times.get(name, [])
             tm = t_arr[r] if r < len(t_arr) else None
-            rows.append({"Route": r + 1, "Name": name, "Score": score, "Time": tm})
+            rows.append({"Route": r + 1, "Name": name, "Score": score, "Time": _format_time(tm)})
     return pd.DataFrame(rows)
+
+
+def _format_time(val):
+    sec = _to_seconds(val)
+    if sec is None:
+        return None
+    m = sec // 60
+    s = sec % 60
+    return f"{m:02d}:{s:02d}"
+
+
+def _to_seconds(val):
+    if val is None:
+        return None
+    # accept already-numeric
+    if isinstance(val, (int, float)):
+        if math.isnan(val):
+            return None
+        return int(val)
+    # accept "mm:ss"
+    if isinstance(val, str) and ":" in val:
+        try:
+            parts = val.split(":")
+            if len(parts) == 2:
+                m, s = parts
+                return int(m) * 60 + int(s)
+        except Exception:
+            return None
+    # accept numeric strings
+    try:
+        return int(float(val))
+    except Exception:
+        return None
 
 def _df_to_pdf(df: pd.DataFrame, pdf_path: Path, title="Ranking"):
     # Create document with margins and landscape A4

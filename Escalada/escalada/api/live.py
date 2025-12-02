@@ -91,14 +91,19 @@ async def cmd(cmd: Cmd):
         new_count = (int(sm["holdCount"]) + 1) if delta == 1 else round(sm["holdCount"] + delta, 1)
         sm["holdCount"] = new_count
     elif cmd.type == "REGISTER_TIME":
-        sm["lastRegisteredTime"] = cmd.registeredTime
+        # doar persistăm dacă avem un timp valid
+        if cmd.registeredTime is not None:
+            sm["lastRegisteredTime"] = cmd.registeredTime
     elif cmd.type == "TIMER_SYNC":
         sm["remaining"] = cmd.remaining
     elif cmd.type == "SUBMIT_SCORE":
+        # Folosește timpul memorat anterior dacă nu e trimis în request
+        effective_time = cmd.registeredTime if cmd.registeredTime is not None else sm.get("lastRegisteredTime")
+        cmd.registeredTime = effective_time
         sm["started"] = False
         sm["timerState"] = "idle"
         sm["holdCount"] = 0.0
-        sm["lastRegisteredTime"] = cmd.registeredTime
+        sm["lastRegisteredTime"] = effective_time
         sm["remaining"] = None
         # marchează competitorul și mută la următorul
         if sm.get("competitors"):

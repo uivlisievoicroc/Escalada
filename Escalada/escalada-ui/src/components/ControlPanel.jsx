@@ -61,6 +61,7 @@ window.addEventListener("error", (e) => {
   useEffect(() => {
     registeredTimesRef.current = registeredTimes;
   }, [registeredTimes]);
+  const [rankingStatus, setRankingStatus] = useState({});
 
 
   // Refs pentru a păstra ultima versiune a stărilor
@@ -154,6 +155,7 @@ window.addEventListener("error", (e) => {
               setUsedHalfHold(prev => ({ ...prev, [idx]: msg.delta === 0.1 }));
               break;
             case 'SUBMIT_SCORE':
+              persistRankingEntry(idx, msg.competitor, msg.score, msg.registeredTime);
               setHoldClicks(prev => ({ ...prev, [idx]: 0 }));
               setUsedHalfHold(prev => ({ ...prev, [idx]: false }));
               setTimerStates(prev => ({ ...prev, [idx]: "idle" }));
@@ -320,13 +322,15 @@ window.addEventListener("error", (e) => {
       alert("Nu există un timp de înregistrat pentru acest box.");
       return;
     }
-    setRegisteredTimes(prev => ({ ...prev, [idx]: current }));
+    const total = defaultTimerSec(idx);
+    const elapsed = Math.max(0, total - current);
+    setRegisteredTimes(prev => ({ ...prev, [idx]: elapsed }));
     try {
-      localStorage.setItem(`registeredTime-${idx}`, current.toString());
+      localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
     } catch (err) {
       console.error("Failed to save registered time", err);
     }
-    registerTime(idx, current);
+    registerTime(idx, elapsed);
   };
 
     
@@ -522,6 +526,12 @@ window.addEventListener("error", (e) => {
       return rest;
     });
     clearRegisteredTime(index);
+    try {
+      localStorage.removeItem(`ranking-${index}`);
+      localStorage.removeItem(`rankingTimes-${index}`);
+    } catch (err) {
+      console.error("Failed to clear cached rankings on delete", err);
+    }
   };
 
 
@@ -604,6 +614,12 @@ window.addEventListener("error", (e) => {
     // reset timer button
     setTimerStates(prev => ({ ...prev, [index]: "idle" }));
     clearRegisteredTime(index);
+    try {
+      localStorage.removeItem(`ranking-${index}`);
+      localStorage.removeItem(`rankingTimes-${index}`);
+    } catch (err) {
+      console.error("Failed to clear cached rankings on reset", err);
+    }
     // Send INIT_ROUTE for the next route
     const currentBox = listboxes[index];
     const nextRouteIndex = currentBox.routeIndex + 1;
@@ -663,8 +679,53 @@ window.addEventListener("error", (e) => {
     }
   };
 
+  const persistRankingEntry = (boxIdx, competitor, score, registeredTime) => {
+    if (!competitor) return;
+    const box = listboxesRef.current[boxIdx] || listboxes[boxIdx];
+    const routeIdx = (box?.routeIndex || 1) - 1;
+    const timeVal =
+      typeof registeredTime === "string"
+        ? parseFloat(registeredTime)
+        : registeredTime;
+    try {
+      const rawScores = localStorage.getItem(`ranking-${boxIdx}`);
+      const rawTimes = localStorage.getItem(`rankingTimes-${boxIdx}`);
+      const scores = rawScores ? JSON.parse(rawScores) : {};
+      const times = rawTimes ? JSON.parse(rawTimes) : {};
+      if (!scores[competitor]) scores[competitor] = [];
+      if (!times[competitor]) times[competitor] = [];
+      scores[competitor][routeIdx] = score;
+      if (typeof timeVal === "number" && !Number.isNaN(timeVal)) {
+        times[competitor][routeIdx] = timeVal;
+      }
+      localStorage.setItem(`ranking-${boxIdx}`, JSON.stringify(scores));
+      localStorage.setItem(`rankingTimes-${boxIdx}`, JSON.stringify(times));
+    } catch (err) {
+      console.error("Failed to persist ranking entry", err);
+    }
+  };
+
   const handleScoreSubmit = async (score, boxIdx) => {
-    const registeredTime = timeCriterionEnabled ? registeredTimes[boxIdx] : undefined;
+    const registeredTime = (() => {
+      if (!timeCriterionEnabled) return undefined;
+      const fromState = registeredTimes[boxIdx];
+      if (typeof fromState === "number") return fromState;
+      const raw = localStorage.getItem(`registeredTime-${boxIdx}`);
+      const parsed = parseInt(raw, 10);
+      if (!Number.isNaN(parsed)) return parsed;
+      // Fallback: calculează automat pe baza timerului curent
+      const current = readCurrentTimerSec(boxIdx);
+      if (typeof current === "number") {
+        const total = defaultTimerSec(boxIdx);
+        const elapsed = Math.max(0, total - current);
+        // salvează pentru consistență locală
+        localStorage.setItem(`registeredTime-${boxIdx}`, elapsed.toString());
+        setRegisteredTimes(prev => ({ ...prev, [boxIdx]: elapsed }));
+        return elapsed;
+      }
+      return undefined;
+    })();
+    persistRankingEntry(boxIdx, activeCompetitor, score, registeredTime);
     await submitScore(boxIdx, score, activeCompetitor, registeredTime);
     // Reset UI state for this box
     setHoldClicks(prev => ({ ...prev, [boxIdx]: 0 }));
@@ -680,12 +741,72 @@ window.addEventListener("error", (e) => {
     const scores = {};
     const times = {};
     const box = listboxes[boxIdx];
+    const routeIdx = (box?.routeIndex || 1) - 1;
+    let cachedScores = {};
+    let cachedTimes = {};
+    try {
+      cachedScores = JSON.parse(localStorage.getItem(`ranking-${boxIdx}`) || "{}");
+      cachedTimes = JSON.parse(localStorage.getItem(`rankingTimes-${boxIdx}`) || "{}");
+    } catch (err) {
+      console.error("Failed to read cached rankings", err);
+    }
     if (box && box.concurenti) {
       box.concurenti.forEach(c => {
         if (c.marked) comp.push(c.nume);
+        const arrScore = cachedScores[c.nume];
+        if (Array.isArray(arrScore) && arrScore.length > routeIdx) {
+          scores[c.nume] = arrScore[routeIdx];
+        }
+        const arrTime = cachedTimes[c.nume];
+        if (Array.isArray(arrTime) && arrTime.length > routeIdx) {
+          times[c.nume] = arrTime[routeIdx];
+        }
       });
     }
     return { comp, scores, times };
+  };
+  const showRankingStatus = (boxIdx, message, type = "info") => {
+    setRankingStatus(prev => ({ ...prev, [boxIdx]: { message, type } }));
+    setTimeout(() => {
+      setRankingStatus(prev => {
+        if (prev[boxIdx]?.message !== message) return prev;
+        const { [boxIdx]: _, ...rest } = prev;
+        return rest;
+      });
+    }, 3000);
+  };
+  const handleGenerateRankings = async (boxIdx) => {
+    const box = listboxesRef.current[boxIdx] || listboxes[boxIdx];
+    if (!box) return;
+    let ranking = {};
+    let rankingTimes = {};
+    try {
+      ranking = JSON.parse(localStorage.getItem(`ranking-${boxIdx}`) || "{}");
+      rankingTimes = JSON.parse(localStorage.getItem(`rankingTimes-${boxIdx}`) || "{}");
+    } catch (err) {
+      console.error("Failed to read cached rankings for export", err);
+    }
+    const clubMap = {};
+    (box.concurenti || []).forEach(c => { clubMap[c.nume] = c.club; });
+    try {
+      const res = await fetch(`${API_CP.replace("/cmd", "")}/save_ranking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          categorie: box.categorie,
+          route_count: box.routesCount,
+          scores: ranking,
+          clubs: clubMap,
+          times: rankingTimes,
+          use_time_tiebreak: timeCriterionEnabled,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showRankingStatus(boxIdx, "Clasament generat");
+    } catch (err) {
+      console.error("Eroare la generarea clasamentului:", err);
+      showRankingStatus(boxIdx, "Eroare la generare", "error");
+    }
   };
   const handleCeremony = (category) => {
     // Open the ceremony window immediately on click
@@ -906,6 +1027,7 @@ window.addEventListener("error", (e) => {
             times={editTimes}
             onClose={() => setShowModifyModal(false)}
             onSubmit={(name, newScore, newTime) => {
+              persistRankingEntry(idx, name, newScore, newTime);
               submitScore(idx, newScore, name, newTime);
               setShowModifyModal(false);
             }}
@@ -935,25 +1057,40 @@ window.addEventListener("error", (e) => {
             <QRCode value={judgeUrl} size={96} />
           </div>
 
-          <div className="flex gap-2">
-          <button
-            className="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600"
-            onClick={() => handleReset(idx)}
-          >
-            Reset Listbox
-          </button>
-          <button
-            className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-            onClick={() => handleDelete(idx)}
-          >
-            Delete Listbox
-          </button>
-        </div>
+        <div className="flex gap-2">
         <button
-          className="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-          onClick={() => handleCeremony(lb.categorie)}
+          className="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600"
+          onClick={() => handleReset(idx)}
         >
-          Award Ceremony
+          Reset Listbox
+        </button>
+        <button
+          className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+          onClick={() => handleDelete(idx)}
+        >
+          Delete Listbox
+        </button>
+      </div>
+      <button
+        className="mt-2 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+        onClick={() => handleGenerateRankings(idx)}
+      >
+        Generate Rankings
+      </button>
+      {rankingStatus[idx]?.message && (
+        <div
+          className={`text-sm mt-1 px-2 py-1 rounded ${
+            rankingStatus[idx].type === "error" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+          }`}
+        >
+          {rankingStatus[idx].message}
+        </div>
+      )}
+      <button
+        className="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+        onClick={() => handleCeremony(lb.categorie)}
+      >
+        Award Ceremony
         </button>
         </div>
       

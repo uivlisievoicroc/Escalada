@@ -29,6 +29,16 @@ const JudgePage = () => {
     const parsed = parseInt(raw, 10);
     return Number.isNaN(parsed) ? null : parsed;
   });
+  const getTimerPreset = () => {
+    const specific = localStorage.getItem(`climbingTime-${idx}`);
+    const global = localStorage.getItem("climbingTime");
+    return specific || global || "05:00";
+  };
+  const presetToSec = (preset) => {
+    const [m, s] = (preset || "").split(":").map(Number);
+    return (m || 0) * 60 + (s || 0);
+  };
+  const totalDurationSec = () => presetToSec(getTimerPreset());
   // WebSocket subscription to backend for real-time updates
   const wsRef = useRef(null);
 
@@ -237,13 +247,14 @@ useEffect(() => {
       alert("Nu există un timp de înregistrat pentru acest box.");
       return;
     }
-    setRegisteredTime(current);
+    const elapsed = Math.max(0, totalDurationSec() - current);
+    setRegisteredTime(elapsed);
     try {
-      localStorage.setItem(`registeredTime-${idx}`, current.toString());
+      localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
     } catch (err) {
       console.error("Failed storing registered time", err);
     }
-    registerTime(idx, current);
+    registerTime(idx, elapsed);
   };
 
   // Handler for Insert Score
@@ -330,7 +341,25 @@ useEffect(() => {
         registeredTime={timeCriterionEnabled ? registeredTime : undefined}
         onClose={() => setShowScoreModal(false)}
         onSubmit={(score) => {
-          const timeToSend = timeCriterionEnabled ? registeredTime : undefined;
+          const timeToSend = (() => {
+            if (!timeCriterionEnabled) return undefined;
+            if (typeof registeredTime === "number") return registeredTime;
+            const raw = localStorage.getItem(`registeredTime-${idx}`);
+            const parsed = parseInt(raw, 10);
+            if (!Number.isNaN(parsed)) return parsed;
+            // Fallback: calculează automat din timerul curent
+            const fallbackCurrent =
+              typeof timerSeconds === "number"
+                ? timerSeconds
+                : parseInt(localStorage.getItem(`timer-${idx}`) || "", 10);
+            if (!Number.isNaN(fallbackCurrent)) {
+              const elapsed = Math.max(0, totalDurationSec() - fallbackCurrent);
+              localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
+              setRegisteredTime(elapsed);
+              return elapsed;
+            }
+            return undefined;
+          })();
           submitScore(idx, score, currentClimber, timeToSend);
           clearRegisteredTime();
           setShowScoreModal(false);
