@@ -1,19 +1,34 @@
 # escalada/api/live.py
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.websockets import WebSocket
 
 # state per boxId
 from typing import Dict
-from fastapi import HTTPException
+import asyncio
+import logging
+import json
+
+# Import validation and rate limiting
+from escalada.validation import ValidatedCmd, InputSanitizer
+from escalada.rate_limit import check_rate_limit
+
+logger = logging.getLogger(__name__)
+
 state_map: Dict[int, dict] = {}
+state_locks: Dict[int, asyncio.Lock] = {}  # Lock per boxId
 time_criterion_enabled: bool = False
+time_criterion_lock = asyncio.Lock()  # Global time criterion lock
 
 
 router = APIRouter()
 channels: dict[int, set[WebSocket]] = {}
 
+# Test mode - disable validation for backward compatibility
+VALIDATION_ENABLED = True
+
 class Cmd(BaseModel):
+    """Legacy Cmd model - use ValidatedCmd for new validation"""
     boxId: int
     type: str   # START_TIMER, STOP_TIMER, RESUME_TIMER, PROGRESS_UPDATE, REQUEST_ACTIVE_COMPETITOR, SUBMIT_SCORE, INIT_ROUTE, REQUEST_STATE
 
@@ -25,6 +40,7 @@ class Cmd(BaseModel):
     score: float | None = None
     competitor: str | None = None
     registeredTime: float | None = None
+    competitorIdx: int | None = None
 
     # for INIT_ROUTE
     routeIndex: int | None = None
@@ -38,102 +54,174 @@ class Cmd(BaseModel):
 
     # for TIMER_SYNC
     remaining: float | None = None
+    
+    # legacy alias for registeredTime
+    time: float | None = None
 
 @router.post("/cmd")
 async def cmd(cmd: Cmd):
+    """
+    Handle competition commands with validation and rate limiting
+    
+    Validates:
+    - Input format and types
+    - Box ID range
+    - Required fields for each command type
+    - Competitor name safety
+    - Timer preset format
+    
+    Rate Limits:
+    - 60 requests/minute per box (global)
+    - 10 requests/second per box
+    - Per-command-type limits (e.g., PROGRESS_UPDATE: 120/min)
+    """
+    
+    # ==================== VALIDATION ====================
+    # Map legacy "time" field to registeredTime when provided
+    if cmd.registeredTime is None and cmd.time is not None:
+        cmd.registeredTime = cmd.time
+
+    try:
+        if VALIDATION_ENABLED:
+            # Build dict with only non-None values
+            cmd_data = {k: v for k, v in cmd.model_dump().items() if v is not None}
+            if "time" in cmd_data and "registeredTime" not in cmd_data:
+                cmd_data["registeredTime"] = cmd_data.pop("time")
+            # Validate and sanitize input
+            validated_cmd = ValidatedCmd(**cmd_data)
+        else:
+            # Validation disabled - use cmd as is
+            validated_cmd = cmd
+    except Exception as e:
+        logger.warning(f'Command validation failed for box {cmd.boxId}: {e}')
+        raise HTTPException(status_code=400, detail=f'Invalid command: {str(e)}')
+    
+    # ==================== RATE LIMITING ====================
+    # Skip rate limiting in test mode (when VALIDATION_ENABLED is False)
+    if VALIDATION_ENABLED:
+        is_allowed, reason = check_rate_limit(cmd.boxId, cmd.type)
+        if not is_allowed:
+            logger.warning(f'Rate limit exceeded for box {cmd.boxId}: {reason}')
+            raise HTTPException(status_code=429, detail=reason)
+    
+    # ==================== SANITIZATION ====================
+    # Validation already checks for SQL injection/XSS in ValidatedCmd
+    # No additional sanitization needed - preserve original input including diacritics
+    
     print(f"Backend received cmd: {cmd}")
+
+    
+    # Get or create lock for this boxId
+    if cmd.boxId not in state_locks:
+        state_locks[cmd.boxId] = asyncio.Lock()
+    
+    lock = state_locks[cmd.boxId]
+    
     # Toggle global time criterion without touching per‑box state
     if cmd.type == "SET_TIME_CRITERION":
         global time_criterion_enabled
-        time_criterion_enabled = bool(cmd.timeCriterionEnabled)
+        async with time_criterion_lock:
+            time_criterion_enabled = bool(cmd.timeCriterionEnabled)
         await _broadcast_time_criterion()
         return {"status": "ok"}
-    # Update server-side state snapshot
-    sm = state_map.setdefault(cmd.boxId, {
-        "initiated": False,
-        "holdsCount": 0,
-        "currentClimber": "",
-        "started": False,
-        "timerState": "idle",
-        "holdCount": 0.0,
-        "routeIndex": 1,
-        "competitors": [],
-        "categorie": "",
-        "lastRegisteredTime": None,
-        "remaining": None,
-        "timerPreset": None,
-        "timerPresetSec": None,
-    })
-    if cmd.type == "INIT_ROUTE":
-        sm["initiated"] = True
-        sm["holdsCount"] = cmd.holdsCount or 0
-        sm["routeIndex"] = cmd.routeIndex or 1
-        sm["competitors"] = cmd.competitors or []
-        sm["currentClimber"] = cmd.competitors[0]["nume"] if cmd.competitors else ""
-        sm["started"] = False
-        sm["timerState"] = "idle"
-        sm["holdCount"] = 0.0
-        sm["lastRegisteredTime"] = None
-        sm["remaining"] = None
-        if cmd.categorie:
-            sm["categorie"] = cmd.categorie
-        if cmd.timerPreset:
-            sm["timerPreset"] = cmd.timerPreset
-            sm["timerPresetSec"] = _parse_timer_preset(cmd.timerPreset)
-    elif cmd.type == "START_TIMER":
-        sm["started"] = True
-        sm["timerState"] = "running"
-        sm["lastRegisteredTime"] = None
-        sm["remaining"] = None
-    elif cmd.type == "STOP_TIMER":
-        sm["started"] = False
-        sm["timerState"] = "paused"
-    elif cmd.type == "RESUME_TIMER":
-        sm["started"] = True
-        sm["timerState"] = "running"
-        sm["lastRegisteredTime"] = None
-    elif cmd.type == "PROGRESS_UPDATE":
-        delta = cmd.delta or 1
-        new_count = (int(sm["holdCount"]) + 1) if delta == 1 else round(sm["holdCount"] + delta, 1)
-        sm["holdCount"] = new_count
-    elif cmd.type == "REGISTER_TIME":
-        # doar persistăm dacă avem un timp valid
-        if cmd.registeredTime is not None:
-            sm["lastRegisteredTime"] = cmd.registeredTime
-    elif cmd.type == "TIMER_SYNC":
-        sm["remaining"] = cmd.remaining
-    elif cmd.type == "SUBMIT_SCORE":
-        # Folosește timpul memorat anterior dacă nu e trimis în request
-        effective_time = cmd.registeredTime if cmd.registeredTime is not None else sm.get("lastRegisteredTime")
-        cmd.registeredTime = effective_time
-        sm["started"] = False
-        sm["timerState"] = "idle"
-        sm["holdCount"] = 0.0
-        sm["lastRegisteredTime"] = effective_time
-        sm["remaining"] = None
-        # marchează competitorul și mută la următorul
-        if sm.get("competitors"):
-            for comp in sm["competitors"]:
-                if comp.get("nume") == cmd.competitor:
-                    comp["marked"] = True
-                    break
-            next_comp = next((c.get("nume") for c in sm["competitors"] if not c.get("marked")), "")
-            sm["currentClimber"] = next_comp
-    elif cmd.type == "REQUEST_STATE":
-        await _send_state_snapshot(cmd.boxId)
-        return {"status": "ok"}
-    # else: leave previous state for other types
-    # Send to all active WebSockets for this box, safely
-    sockets = channels.get(cmd.boxId) or set()
-    for ws in list(sockets):
-        try:
-            await ws.send_json(cmd.model_dump())
-        except Exception:
-            # remove any closed/errored socket
-            sockets.discard(ws)
-    # după SUBMIT_SCORE, trimite snapshot pentru a propaga currentClimber/holdCount resetate
-    if cmd.type == "SUBMIT_SCORE":
-        await _send_state_snapshot(cmd.boxId)
+    
+    # Lock state access for this boxId
+    async with lock:
+        # Update server-side state snapshot
+        sm = state_map.setdefault(cmd.boxId, {
+            "initiated": False,
+            "holdsCount": 0,
+            "currentClimber": "",
+            "started": False,
+            "timerState": "idle",
+            "holdCount": 0.0,
+            "routeIndex": 1,
+            "competitors": [],
+            "categorie": "",
+            "lastRegisteredTime": None,
+            "remaining": None,
+            "timerPreset": None,
+            "timerPresetSec": None,
+        })
+        if cmd.type == "INIT_ROUTE":
+            sm["initiated"] = True
+            sm["holdsCount"] = cmd.holdsCount or 0
+            sm["routeIndex"] = cmd.routeIndex or 1
+            sm["competitors"] = cmd.competitors or []
+            sm["currentClimber"] = cmd.competitors[0]["nume"] if cmd.competitors else ""
+            sm["started"] = False
+            sm["timerState"] = "idle"
+            sm["holdCount"] = 0.0
+            sm["lastRegisteredTime"] = None
+            sm["remaining"] = None
+            if cmd.categorie:
+                sm["categorie"] = cmd.categorie
+            if cmd.timerPreset:
+                sm["timerPreset"] = cmd.timerPreset
+                sm["timerPresetSec"] = _parse_timer_preset(cmd.timerPreset)
+        elif cmd.type == "START_TIMER":
+            sm["started"] = True
+            sm["timerState"] = "running"
+            sm["lastRegisteredTime"] = None
+            sm["remaining"] = None
+        elif cmd.type == "STOP_TIMER":
+            sm["started"] = False
+            sm["timerState"] = "paused"
+        elif cmd.type == "RESUME_TIMER":
+            sm["started"] = True
+            sm["timerState"] = "running"
+            sm["lastRegisteredTime"] = None
+        elif cmd.type == "PROGRESS_UPDATE":
+            delta = cmd.delta or 1
+            new_count = (int(sm["holdCount"]) + 1) if delta == 1 else round(sm["holdCount"] + delta, 1)
+            sm["holdCount"] = new_count
+        elif cmd.type == "REGISTER_TIME":
+            # doar persistăm dacă avem un timp valid
+            if cmd.registeredTime is not None:
+                sm["lastRegisteredTime"] = cmd.registeredTime
+        elif cmd.type == "TIMER_SYNC":
+            sm["remaining"] = cmd.remaining
+        elif cmd.type == "SUBMIT_SCORE":
+            # Folosește timpul memorat anterior dacă nu e trimis în request
+            effective_time = cmd.registeredTime if cmd.registeredTime is not None else sm.get("lastRegisteredTime")
+            cmd.registeredTime = effective_time
+            sm["started"] = False
+            sm["timerState"] = "idle"
+            sm["holdCount"] = 0.0
+            sm["lastRegisteredTime"] = effective_time
+            sm["remaining"] = None
+            # marchează competitorul și mută la următorul
+            if sm.get("competitors"):
+                for comp in sm["competitors"]:
+                    # Validate that competitor has required fields
+                    if not isinstance(comp, dict):
+                        logger.error(f"Invalid competitor object: {comp}")
+                        continue
+                    if comp.get("nume") == cmd.competitor:
+                        comp["marked"] = True
+                        break
+                next_comp = next((c.get("nume") for c in sm["competitors"] 
+                                 if isinstance(c, dict) and not c.get("marked")), "")
+                sm["currentClimber"] = next_comp
+        elif cmd.type == "REQUEST_STATE":
+            await _send_state_snapshot(cmd.boxId)
+            return {"status": "ok"}
+        # else: leave previous state for other types
+        
+        # Send to all active WebSockets for this box, safely
+        sockets = channels.get(cmd.boxId) or set()
+        for ws in list(sockets):
+            try:
+                # Use ensure_ascii=False to preserve UTF-8 diacritics
+                await ws.send_text(json.dumps(cmd.model_dump(), ensure_ascii=False))
+            except Exception as e:
+                # remove any closed/errored socket
+                logger.warning(f"Failed to send to WebSocket: {e}")
+                sockets.discard(ws)
+        # după SUBMIT_SCORE, trimite snapshot pentru a propaga currentClimber/holdCount resetate
+        if cmd.type == "SUBMIT_SCORE":
+            await _send_state_snapshot(cmd.boxId)
+    
     return {"status": "ok"}
 
 @router.websocket("/ws/{box_id}")
@@ -141,13 +229,60 @@ async def websocket_endpoint(ws: WebSocket, box_id: int):
     await ws.accept()
     channels.setdefault(box_id, set()).add(ws)
     await _send_state_snapshot(box_id, targets={ws})
+    
+    last_pong = asyncio.get_event_loop().time()
+    heartbeat_interval = 30  # Send ping every 30 seconds
+    heartbeat_timeout = 60   # Consider dead if no pong for 60 seconds
+    
+    async def send_heartbeat():
+        """Send periodic heartbeat pings"""
+        nonlocal last_pong
+        while True:
+            try:
+                await asyncio.sleep(heartbeat_interval)
+                current_time = asyncio.get_event_loop().time()
+                
+                # Check if client is still alive
+                if current_time - last_pong > heartbeat_timeout:
+                    logger.warning(f"WebSocket heartbeat timeout for box {box_id}")
+                    break
+                
+                # Send ping (preserve UTF-8)
+                await ws.send_text(json.dumps({"type": "PING", "timestamp": current_time}, ensure_ascii=False))
+            except Exception as e:
+                logger.warning(f"Heartbeat error for box {box_id}: {e}")
+                break
+    
+    # Start heartbeat task
+    heartbeat_task = asyncio.create_task(send_heartbeat())
+    
     try:
         while True:
-            await ws.receive_text()          # ping‑pong if you like
-    except Exception:
-        pass
+            data = await ws.receive_text()
+            
+            # Handle PONG response
+            try:
+                msg = json.loads(data) if isinstance(data, str) else data
+                if isinstance(msg, dict) and msg.get("type") == "PONG":
+                    last_pong = asyncio.get_event_loop().time()
+            except Exception:
+                pass  # Not JSON or not a PONG, ignore
+                
+    except Exception as e:
+        logger.warning(f"WebSocket error for box {box_id}: {e}")
     finally:
-        channels[box_id].discard(ws)
+        # Cancel heartbeat task
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        
+        # Clean up WebSocket from channels
+        if box_id in channels:
+            channels[box_id].discard(ws)
+            if not channels[box_id]:
+                del channels[box_id]
 
 
 # Route to get state snapshot for a box
@@ -194,7 +329,8 @@ async def _send_state_snapshot(box_id: int, targets: set[WebSocket] | None = Non
     sockets = targets or channels.get(box_id) or set()
     for ws in list(sockets):
         try:
-            await ws.send_json(payload)
+            # Preserve UTF-8 diacritics with ensure_ascii=False
+            await ws.send_text(json.dumps(payload, ensure_ascii=False))
         except Exception:
             sockets.discard(ws)
 
@@ -217,6 +353,7 @@ async def _broadcast_time_criterion():
     for sockets in channels.values():
         for ws in list(sockets):
             try:
-                await ws.send_json(payload)
+                # Preserve UTF-8 diacritics
+                await ws.send_text(json.dumps(payload, ensure_ascii=False))
             except Exception:
                 sockets.discard(ws)

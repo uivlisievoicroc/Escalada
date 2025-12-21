@@ -1,5 +1,8 @@
 import React, { useState } from "react";
 
+const API_PROTOCOL = window.location.protocol === "https:" ? "https" : "http";
+const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000/api`;
+
 const ModalUpload = ({ isOpen, onClose, onUpload }) => {
   const [category, setCategory] = useState("");
   const [file, setFile] = useState(null);
@@ -14,41 +17,51 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
       !routesCount ||
       holdsCounts.length !== Number(routesCount) ||
       holdsCounts.some(h => !h)
-    ) return;
-
-    const formData = new FormData();
-    formData.append("routesCount", routesCount);
-    formData.append("holdsCounts", JSON.stringify(holdsCounts));
-    formData.append("category", category);
-    formData.append("file", file);
-    formData.append("include_clubs", "true");
-
-    const res = await fetch("http://127.0.0.1:8000/api/upload", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error("Eroare la upload:", errorText);
+    ) {
+      alert('Completează toate câmpurile');
       return;
     }
 
-    const data = await res.json();
+    try {
+      const formData = new FormData();
+      formData.append("routesCount", routesCount);
+      formData.append("holdsCounts", JSON.stringify(holdsCounts));
+      formData.append("category", category);
+      formData.append("file", file);
+      formData.append("include_clubs", "true");
 
-    // asigurăm câmpurile de care avem nevoie în ControlPanel
-    const payload = {
-      categorie: category,          // în cazul în care back‑end-ul nu-l trimite
-      concurenti: data.concurenti || [],  // lista de concurenţi din XLSX
-      routesCount,                  // valoarea introdusă în formular
-      holdsCounts,                  // array-ul complet
-    };
+      const res = await fetch(`${API_BASE}/upload`, {
+        method: "POST",
+        body: formData,
+      });
 
-    // dacă back‑end-ul întoarce şi alte informaţii (id, etc.) păstrăm
-    Object.assign(payload, data);
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("Eroare la upload:", errorText);
+        alert(`Eroare: ${errorText}`);
+        return;
+      }
 
-    console.log("Upload payload:", payload);
-    onUpload(payload);
+      const data = await res.json();
+      console.log('✅ Upload successful:', data);
+
+      // Notifică ControlPanel cu noul listbox
+      if (data && data.listbox) {
+        onUpload(data.listbox);
+        setCategory('');
+        setRoutesCount('');
+        setHoldsCounts([]);
+        setFile(null);
+        onClose?.();
+        alert('✅ Listbox încărcat cu succes!');
+      } else {
+        console.error('No listbox in response:', data);
+        alert('Eroare: nu s-a putut procesa răspunsul');
+      }
+    } catch (err) {
+      console.error('❌ Upload error:', err);
+      alert('Eroare la conectare: ' + err.message);
+    }
   };
 
   if (!isOpen) return null;

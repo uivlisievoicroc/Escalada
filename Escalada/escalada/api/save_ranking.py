@@ -10,7 +10,33 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle, 
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-pdfmetrics.registerFont(TTFont("FreeSans", "FreeSans.ttf"))
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+import os
+
+# Register Unicode-capable font for diacritics
+# Try DejaVuSans first, then fallback to reportlab's built-in UnicodeCIDFont
+DEFAULT_FONT = "Helvetica"
+try:
+    # Try to find and register DejaVuSans
+    font_paths = [
+        "DejaVuSans.ttf",  # Current directory
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+        "/System/Library/Fonts/Supplemental/DejaVuSans.ttf",  # macOS
+        "C:\\Windows\\Fonts\\DejaVuSans.ttf",  # Windows
+        "/Library/Fonts/DejaVuSans.ttf",  # macOS user fonts
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            pdfmetrics.registerFont(TTFont("DejaVuSans", path))
+            DEFAULT_FONT = "DejaVuSans"
+            break
+    
+    # If DejaVuSans not found, use Helvetica (limited diacritics)
+    # Note: Helvetica may not render all Romanian diacritics correctly
+except Exception as e:
+    import logging
+    logging.warning(f"Could not register DejaVuSans font: {e}. Using Helvetica (limited diacritic support).")
+    DEFAULT_FONT = "Helvetica"
 
 router = APIRouter()
 
@@ -31,7 +57,7 @@ def save_ranking(payload: RankingIn):
     raw_times = payload.times or {}
     # normalize toate timpiile la secunde (int) sau None
     times = {
-        name: [ _to_seconds(t) for t in arr ]
+        name: [_to_seconds(t) for t in arr]
         for name, arr in raw_times.items()
     }
     use_time = payload.use_time_tiebreak
@@ -41,11 +67,12 @@ def save_ranking(payload: RankingIn):
         return _to_seconds(arr[idx]) if idx < len(arr) else None
 
     # ---------- excel + pdf TOTAL ----------
-    overall_df = _build_overall_df(payload)
+    overall_df = _build_overall_df(payload, times)
     xlsx_tot = cat_dir / "overall.xlsx"
     pdf_tot  = cat_dir / "overall.pdf"
     overall_df.to_excel(xlsx_tot, index=False)
     _df_to_pdf(overall_df, pdf_tot, title=f"{payload.categorie} – Overall")
+    saved_paths = [xlsx_tot, pdf_tot]
 
     # ---------- excel + pdf BY‑ROUTE ----------
     scores = payload.scores
@@ -118,16 +145,17 @@ def save_ranking(payload: RankingIn):
         pdf_route = cat_dir / f"route_{r+1}.pdf"
         df_route.to_excel(xlsx_route, index=False)
         _df_to_pdf(df_route, pdf_route, title=f"{payload.categorie} – Route {r+1}")
+        saved_paths.extend([xlsx_route, pdf_route])
 
-    return {"status": "ok", "saved": [str(p) for p in (xlsx_tot, pdf_tot, xlsx_route, pdf_route)]}
+    return {"status": "ok", "saved": [str(p) for p in saved_paths]}
 
 
 # ------- helpers -------
-def _build_overall_df(p: RankingIn) -> pd.DataFrame:
+def _build_overall_df(p: RankingIn, normalized_times: dict[str, list[int | None]] | None = None) -> pd.DataFrame:
     from math import prod
 
     scores = p.scores
-    times = p.times or {}
+    times = normalized_times if normalized_times is not None else (p.times or {})
     use_time = p.use_time_tiebreak
     data = []
     n = p.route_count
@@ -135,7 +163,7 @@ def _build_overall_df(p: RankingIn) -> pd.DataFrame:
 
     for name, arr in scores.items():
         # calcul rank points identic frontend
-        rp = [None] * n
+        rp: list[float | None] = [None] * n
         for r in range(n):
             scored = []
             for nume, sc in scores.items():
@@ -180,7 +208,7 @@ def _build_overall_df(p: RankingIn) -> pd.DataFrame:
 
         total = round(prod(filled) ** (1 / n), 3)
         club = p.clubs.get(name, "")
-        row = [name, club]
+        row: list[str | float | None] = [name, club]
         time_row = times.get(name, [])
         for idx in range(n):
             row.append(arr[idx] if idx < len(arr) else None)
@@ -221,7 +249,7 @@ def _build_by_route_df(p: RankingIn) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _format_time(val):
+def _format_time(val) -> str | None:
     sec = _to_seconds(val)
     if sec is None:
         return None
@@ -230,7 +258,7 @@ def _format_time(val):
     return f"{m:02d}:{s:02d}"
 
 
-def _to_seconds(val):
+def _to_seconds(val) -> int | None:
     if val is None:
         return None
     # accept already-numeric
@@ -271,7 +299,7 @@ def _df_to_pdf(df: pd.DataFrame, pdf_path: Path, title="Ranking"):
         parent=styles['Heading1'],
         alignment=1,        # center
         fontSize=18,
-        fontName="FreeSans",
+        fontName=DEFAULT_FONT,
         spaceAfter=12,
     )
 
@@ -282,8 +310,8 @@ def _df_to_pdf(df: pd.DataFrame, pdf_path: Path, title="Ranking"):
     table = Table(data, hAlign='CENTER')
     # Table styling
     tbl_style = TableStyle([
-        ('FONTNAME', (0, 0), (-1, 0), 'FreeSans'),
-        ('FONTNAME', (0, 1), (-1, -1), 'FreeSans'),
+        ('FONTNAME', (0, 0), (-1, 0), DEFAULT_FONT),
+        ('FONTNAME', (0, 1), (-1, -1), DEFAULT_FONT),
         ('FONTSIZE', (0, 0), (-1, 0), 12),
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4F81BD')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),

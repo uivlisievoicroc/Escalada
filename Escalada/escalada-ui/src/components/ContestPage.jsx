@@ -6,6 +6,8 @@ import { useParams } from 'react-router-dom';
 
 const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
 const API_CMD = `${API_PROTOCOL}://${window.location.hostname}:8000/api/cmd`;
+const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000/api`;
+const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
 // RouteProgress: continuous 5 golden-ratio segments, alternating tilt
 const RouteProgress = ({ holds , current = 0, h = 500, w = 20, tilt = 5 }) => {
@@ -172,7 +174,7 @@ const ContestPage = () => {
   // --- WebSocket logic ---
   const wsRef = useRef(null);
     useEffect(() => {
-      const ws = new WebSocket(`ws://${window.location.hostname}:8000/api/ws/${boxId}`);
+      const ws = new WebSocket(`${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${boxId}`);
       wsRef.current = ws;
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
@@ -642,7 +644,7 @@ const ContestPage = () => {
                   times: updatedTimes,
                 });
 
-                fetch("http://127.0.0.1:8000/api/save_ranking", {
+                fetch(`${API_BASE}/save_ranking`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({

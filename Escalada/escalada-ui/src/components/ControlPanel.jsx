@@ -1,8 +1,3 @@
-// API constants for ControlPanel direct fetches (WS broadcast)
-const API_PROTOCOL_CP = window.location.protocol === 'https:' ? 'https' : 'http';
-const API_CP = `${API_PROTOCOL_CP}://${window.location.hostname}:8000/api/cmd`;
-// Map boxId -> reference to the opened contest tab
-const openTabs = {};
 import QRCode from 'react-qr-code';
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import ModalUpload from "./ModalUpload";
@@ -10,6 +5,51 @@ import ModalTimer from "./ModalTimer";
 import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime } from '../utilis/contestActions';
 import ModalModifyScore from "./ModalModifyScore";
 import getWinners from '../utilis/getWinners';
+import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
+
+// Map boxId -> reference to the opened contest tab
+const openTabs = {};
+
+// Get API constants at runtime
+const getApiConfig = () => {
+  const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const hostname = window.location.hostname;
+  return {
+    API_CP: `${protocol}://${hostname}:8000/api/cmd`,
+    WS_PROTOCOL_CP: wsProtocol,
+  };
+};
+
+// Robustly read climbingTime from localStorage, handling JSON-quoted values
+const readClimbingTime = () => {
+  const raw = localStorage.getItem('climbingTime');
+  if (!raw) return '05:00';
+  try {
+    const v = JSON.parse(raw);
+    if (typeof v === 'string') return v;
+  } catch {}
+  const m = raw.match(/^"?(\d{1,2}):(\d{2})"?$/);
+  if (m) {
+    const mm = m[1].padStart(2, '0');
+    const ss = m[2];
+    return `${mm}:${ss}`;
+  }
+  return raw;
+};
+
+// Read timeCriterion flag supporting both "on"/"off" and JSON booleans
+const readTimeCriterionEnabled = () => {
+  const raw = localStorage.getItem('timeCriterionEnabled');
+  if (raw === 'on') return true;
+  if (raw === 'off') return false;
+  if (!raw) return false;
+  try {
+    return !!JSON.parse(raw);
+  } catch {
+    return false;
+  }
+};
 
 const isTabAlive = (t) => {
   try {
@@ -20,18 +60,22 @@ const isTabAlive = (t) => {
 };
 const ModalScore = lazy(() => import("./ModalScore"));
 const ControlPanel = () => {
-  // Ignoră WS close noise la demontare
-window.addEventListener("error", (e) => {
-  if (e.message?.includes("WebSocket") && e.message?.includes("closed")) {
-    e.preventDefault();
-  }
-});
+  // Ignoră WS close noise la demontare (attach once, with cleanup)
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.message?.includes("WebSocket") && e.message?.includes("closed")) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("error", handler);
+    return () => window.removeEventListener("error", handler);
+  }, []);
   const [showModal, setShowModal] = useState(false);
   const [showTimerModal, setShowTimerModal] = useState(false);
   const [controlTimers, setControlTimers] = useState({});
   const loadListboxes = () => {
     const saved = localStorage.getItem("listboxes");
-    const globalPreset = localStorage.getItem("climbingTime") || "05:00";
+    const globalPreset = readClimbingTime();
     if (!saved) return [];
     try {
       return JSON.parse(saved).map(lb => ({
@@ -43,8 +87,8 @@ window.addEventListener("error", (e) => {
     }
   };
   const [listboxes, setListboxes] = useState(loadListboxes);
-  const [climbingTime, setClimbingTime] = useState(() => localStorage.getItem("climbingTime") || "05:00");
-  const [timeCriterionEnabled, setTimeCriterionEnabled] = useState(() => localStorage.getItem("timeCriterionEnabled") === "on");
+  const [climbingTime, setClimbingTime] = useState(readClimbingTime);
+  const [timeCriterionEnabled, setTimeCriterionEnabled] = useState(readTimeCriterionEnabled);
   const [timerStates, setTimerStates] = useState({});
   const [activeBoxId, setActiveBoxId] = useState(null);
   const [activeCompetitor, setActiveCompetitor] = useState("");
@@ -97,7 +141,8 @@ window.addEventListener("error", (e) => {
   const propagateTimeCriterion = async (enabled) => {
     syncTimeCriterion(enabled);
     try {
-      await fetch(API_CP, {
+      const config = getApiConfig();
+      await fetch(config.API_CP, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ boxId: -1, type: 'SET_TIME_CRITERION', timeCriterionEnabled: enabled })
@@ -115,13 +160,12 @@ window.addEventListener("error", (e) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    const refsSnapshot = wsRefs.current;
+    const disconnectFns = {}; // Track disconnect functions from hooks
+    
     listboxes.forEach((lb, idx) => {
-      // dacă deja avem WS pentru acest idx, nu mai deschide altul
-      if (!wsRefs.current[idx] || wsRefs.current[idx].readyState === WebSocket.CLOSED) {
-        const ws = new WebSocket(`ws://${window.location.hostname}:8000/api/ws/${idx}`);
-        ws.onmessage = (ev) => {
-          const msg = JSON.parse(ev.data);
+      // Only create new WebSocket if we don't have one for this idx
+      if (!wsRefs.current[idx]) {
+        const handleMessage = (msg) => {
           if (msg.type === 'TIME_CRITERION') {
             syncTimeCriterion(!!msg.timeCriterionEnabled);
             return;
@@ -183,7 +227,10 @@ window.addEventListener("error", (e) => {
                     timerPreset: getTimerPreset(idx),
                     timerPresetSec: defaultTimerSec(idx),
                   };
-                  wsRefs.current[idx].send(JSON.stringify(snapshot));
+                  const ws = wsRefs.current[idx];
+                  if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(snapshot));
+                  }
                 })();
               }
               break;
@@ -209,11 +256,110 @@ window.addEventListener("error", (e) => {
               break;
           }
         };
+        
+        // Create WebSocket connection with heartbeat using a custom implementation
+        // that manually manages the connection to fit our multi-box pattern
+        const config = getApiConfig();
+        const url = `${config.WS_PROTOCOL_CP}://${window.location.hostname}:8000/api/ws/${idx}`;
+        const ws = new WebSocket(url);
+        let heartbeatInterval = null;
+        let lastPong = Date.now();
+        
+        ws.onopen = () => {
+          console.log(`✅ WebSocket connected for box ${idx}`);
+          lastPong = Date.now();
+          
+          // Start heartbeat monitoring
+          heartbeatInterval = setInterval(() => {
+            const now = Date.now();
+            const timeSinceLastPong = now - lastPong;
+            
+            // If no PONG received for 60 seconds, reconnect
+            if (timeSinceLastPong > 60000) {
+              console.warn(`⚠️ Heartbeat timeout for box ${idx}, closing connection...`);
+              ws.close();
+              return;
+            }
+            
+            // Send PONG to keep connection alive (server sends PING)
+            if (ws.readyState === WebSocket.OPEN) {
+              try {
+                ws.send(JSON.stringify({ type: 'PONG', timestamp: now }));
+              } catch (err) {
+                console.error(`Failed to send PONG for box ${idx}:`, err);
+              }
+            }
+          }, 30000); // Every 30 seconds
+        };
+        
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            
+            // Handle PING from server
+            if (msg.type === 'PING') {
+              lastPong = Date.now();
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'PONG', timestamp: msg.timestamp }));
+              }
+              return;
+            }
+            
+            handleMessage(msg);
+          } catch (err) {
+            console.error(`Error parsing WebSocket message for box ${idx}:`, err);
+          }
+        };
+        
+        ws.onerror = (err) => {
+          console.error(`❌ WebSocket error for box ${idx}:`, err);
+        };
+        
+        ws.onclose = () => {
+          console.log(`🔌 WebSocket closed for box ${idx}`);
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+          }
+          delete wsRefs.current[idx];
+          
+          // Auto-reconnect after 2 seconds if this box still exists
+          setTimeout(() => {
+            const stillExists = listboxes.some((_, i) => i === idx);
+            if (stillExists && !wsRefs.current[idx]) {
+              console.log(`🔄 Auto-reconnecting WebSocket for box ${idx}...`);
+              // Trigger re-render to recreate connection
+              setListboxes(prev => [...prev]);
+            }
+          }, 2000);
+        };
+        
         wsRefs.current[idx] = ws;
+        disconnectFns[idx] = () => {
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+          }
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
+        };
       }
     });
+    
+    // Cleanup: close WebSockets that are no longer in the list
     return () => {
-      Object.values(refsSnapshot).forEach(ws => ws.close());
+      const currentIndices = new Set(listboxes.map((_, idx) => idx));
+      Object.keys(wsRefs.current).forEach(idx => {
+        if (!currentIndices.has(parseInt(idx))) {
+          if (disconnectFns[idx]) {
+            disconnectFns[idx]();
+          }
+          const ws = wsRefs.current[idx];
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
+          delete wsRefs.current[idx];
+        }
+      });
     };
   }, [listboxes]);
   // Ascultă sincronizarea timerelor via localStorage (evenimentul 'storage')
@@ -287,15 +433,18 @@ window.addEventListener("error", (e) => {
   const getTimerPreset = (idx) => {
     const stored = localStorage.getItem(`climbingTime-${idx}`);
     const lb = listboxesRef.current[idx] || listboxes[idx];
-    const fallback = localStorage.getItem("climbingTime") || climbingTime || "05:00";
+    const fallback = readClimbingTime() || climbingTime || "05:00";
     return stored || (lb && lb.timerPreset) || fallback;
   };
 
   // convert preset MM:SS în secunde pentru un box
   const defaultTimerSec = (idx) => {
       const t = getTimerPreset(idx);
+      if (!/^\d{1,2}:\d{2}$/.test(t)) return 300;
       const [m, s] = t.split(":").map(Number);
-      return (m || 0) * 60 + (s || 0);
+      const mm = Number.isFinite(m) ? m : 5;
+      const ss = Number.isFinite(s) ? s : 0;
+      return mm * 60 + ss;
     };
 
   const readCurrentTimerSec = (idx) => {
@@ -397,7 +546,8 @@ window.addEventListener("error", (e) => {
           [idx]: e.newValue
         }));
         // broadcast to WS listeners
-        fetch(API_CP, {
+        const config = getApiConfig();
+        fetch(config.API_CP, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -480,26 +630,40 @@ window.addEventListener("error", (e) => {
 
   const handleUpload = (data) => {
     const { categorie, concurenti, routesCount, holdsCounts } = data;
+    const routesCountNum = Number(routesCount) || (Array.isArray(holdsCounts) ? holdsCounts.length : 0);
+    const holdsCountsNum = Array.isArray(holdsCounts) ? holdsCounts.map(h => Number(h)) : [];
     const timerPreset = climbingTime || localStorage.getItem("climbingTime") || "05:00";
     const newIdx = listboxes.length;
-    setListboxes(prev => [
-      ...prev,
-      {
-        categorie,
-        concurenti,
-        holdsCounts,
-        routesCount,
-        routeIndex: 1,
-        holdsCount: holdsCounts[0],
-        initiated: false,
-        timerPreset,
+    setListboxes(prev => {
+      const next = [
+        ...prev,
+        {
+          categorie,
+          concurenti,
+          holdsCounts: holdsCountsNum,
+          routesCount: routesCountNum,
+          routeIndex: 1,
+          holdsCount: holdsCountsNum[0] ?? 0,
+          initiated: false,
+          timerPreset,
+        }
+      ];
+      try {
+        localStorage.setItem("listboxes", JSON.stringify(next));
+      } catch (err) {
+        console.error("Failed to persist listboxes to localStorage", err);
       }
-    ]);
-    localStorage.setItem(`climbingTime-${newIdx}`, timerPreset);
+      return next;
+    });
+    try {
+      localStorage.setItem(`climbingTime-${newIdx}`, timerPreset);
+    } catch {}
     // initialize counters for the new box
     setHoldClicks(prev => ({ ...prev, [newIdx]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [newIdx]: false }));
     setTimerStates(prev => ({ ...prev, [newIdx]: "idle" }));
+    // close modal if open
+    setShowModal(false);
   };
 
   const handleDelete = (index) => {
@@ -791,7 +955,8 @@ window.addEventListener("error", (e) => {
     const clubMap = {};
     (box.concurenti || []).forEach(c => { clubMap[c.nume] = c.club; });
     try {
-      const res = await fetch(`${API_CP.replace("/cmd", "")}/save_ranking`, {
+      const config = getApiConfig();
+      const res = await fetch(`${config.API_CP.replace("/cmd", "")}/save_ranking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

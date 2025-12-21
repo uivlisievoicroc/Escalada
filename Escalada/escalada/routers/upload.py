@@ -7,10 +7,13 @@ router = APIRouter(tags=["upload"])
 
 @router.post("/upload")
 async def upload_listbox(
-    
     category: str = Form(...),
-    file: UploadFile = File(...)
+    routesCount: str = Form(...),
+    holdsCounts: str = Form(...),
+    file: UploadFile = File(...),
+    include_clubs: str = Form(default="true")
 ):
+    """Upload competition data from Excel file."""
     # verific MIME
     if file.content_type not in ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.ms-excel"):
         raise HTTPException(status_code=400, detail="Tip fișier neacceptat")
@@ -21,13 +24,41 @@ async def upload_listbox(
     except BadZipFile:
         raise HTTPException(status_code=400, detail="Fișierul încărcat nu este un .xlsx valid")
     
-    ws = wb.active
+    try:
+        ws = wb.active
+        if ws is None:
+            raise HTTPException(status_code=400, detail="Fișierul Excel nu conține nicio foaie")
 
-    result = []
-    # presupunem că prima linie sunt anteturi: Nume, Club
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        nume, club = row[:2]
-        if nume and club:
-            result.append({"nume": str(nume), "club": str(club)})
+        competitors = []
+        # presupunem că prima linie sunt anteturi: Nume, Club
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            nume, club = row[:2]
+            if nume and club:
+                competitors.append({"nume": str(nume), "club": str(club)})
+    finally:
+        wb.close()
 
-    return {"categorie": category, "concurenti": result}
+    # Parse holdsCounts from JSON string
+    import json
+    try:
+        holds_counts_list = json.loads(holdsCounts)
+    except:
+        holds_counts_list = []
+
+    # Return the complete listbox object so frontend can add it immediately
+    new_listbox = {
+        "categorie": category,
+        "concurenti": competitors,
+        "routesCount": int(routesCount),
+        "holdsCounts": holds_counts_list,
+        "routeIndex": 1,
+        "holdsCount": holds_counts_list[0] if holds_counts_list else 0,
+        "initiated": False,
+        "timerPreset": "05:00"
+    }
+
+    return {
+        "status": "success",
+        "message": "Listbox uploaded successfully",
+        "listbox": new_listbox
+    }

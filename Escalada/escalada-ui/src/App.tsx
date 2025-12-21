@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { FC } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AppStateProvider } from './utilis/useAppState';
@@ -6,7 +6,7 @@ import ControlPanel from './components/ControlPanel';
 import ContestPage from './components/ContestPage';
 import JudgePage from './components/JudgePage';
 
-function App() {
+const App: FC = () => {
   return (
     <ErrorBoundary>
       <AppStateProvider>
@@ -18,6 +18,6 @@ function App() {
       </AppStateProvider>
     </ErrorBoundary>
   );
-}
+};
 
 export default App;

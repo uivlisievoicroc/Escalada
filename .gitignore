@@ -1,1 +1,12 @@
+__pycache__/
+*.pyc
+*.log
+.env
+.vscode/
+node_modules/
+dist/
+build/
+*.pdf
+*.xlsx.
+Escalada/escalada/clasamente/
 .DS_Store
