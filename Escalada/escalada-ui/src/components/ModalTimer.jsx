@@ -18,6 +18,8 @@ const ModalTimer = ({ isOpen, onClose, onSet, timeCriterionEnabled = false, onTo
       <form onSubmit={handleSubmit} className="space-y-4">
         <input
           type="text"
+          id="timer-input"
+          name="climbingTime"
           placeholder="mm:ss"
           value={time}
           onChange={(e) => setTime(e.target.value)}

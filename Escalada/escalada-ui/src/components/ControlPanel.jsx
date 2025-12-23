@@ -541,11 +541,15 @@ const ControlPanel = () => {
     const handleStorageClimber = (e) => {
       if (e.key?.startsWith("currentClimber-")) {
         const idx = Number(e.key.split("-")[1]);
+        const competitorName = (e.newValue || "").trim();
         setCurrentClimbers(prev => ({
           ...prev,
           [idx]: e.newValue
         }));
         // broadcast to WS listeners
+        if (!competitorName) {
+          return; // evită 400 când competitorul e gol
+        }
         const config = getApiConfig();
         fetch(config.API_CP, {
           method: 'POST',
@@ -553,9 +557,9 @@ const ControlPanel = () => {
           body: JSON.stringify({
             boxId: idx,
             type: 'ACTIVE_CLIMBER',
-            competitor: e.newValue
+            competitor: competitorName
           })
-        });
+        }).catch(err => console.error("ACTIVE_CLIMBER failed", err));
       }
     };
     window.addEventListener("storage", handleStorageClimber);
@@ -1043,230 +1047,236 @@ const ControlPanel = () => {
           const isRunning = timerState === "running";
           const isPaused = timerState === "paused";
           return (
-  <details
-    key={idx}
-    open
-    className="relative border border-gray-300 rounded bg-white shadow w-64"
-  >
-    <summary className="flex justify-between items-center text-lg font-semibold cursor-pointer p-2 bg-gray-100">
-      <span>
-        {lb.categorie} – Traseu {lb.routeIndex}/{lb.routesCount}
-      </span>
-
-      {/* timer display */}
-      <div className="px-2 py-1 text-right text-sm text-gray-600">
-        {typeof controlTimers[idx] === 'number'
-          ? formatTime(controlTimers[idx])
-          : formatTime(defaultTimerSec(idx))}
-      </div>
-    </summary>
-
-    <ul className="list-disc pl-5 p-2 bg-blue-900 text-white rounded">
-      {lb.concurenti.map((c, i) => {
-        const isClimbing = currentClimbers[idx] === c.nume;
-        return (
-          <li
-            key={i}
-            className={`
-              ${c.marked ? "marked-red " : ""}
-              ${isClimbing ? "bg-yellow-500 text-white animate-pulse " : ""}
-              py-1 px-2 rounded
-            `}
+          <details
+            key={idx}
+            open
+            className="relative border border-gray-300 rounded bg-white shadow w-64"
           >
-            {c.nume} – {c.club}
-          </li>
-        );
-      })}
-    </ul>
-        <div className="mt-2 flex flex-col gap-2">
-        {!lb.initiated && (
-          <button
-            className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
-            onClick={() => handleInitiate(idx)}
-            disabled={lb.initiated}
-          >
-            Initiate Contest
-          </button>
-        )}
-          {!isRunning && !isPaused && (
-            <button
-              className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
-              onClick={() => handleClickStart(idx)}
-              disabled={!lb.initiated}
-            >
-              Start Time
-            </button>
-          )}
-          {isRunning && (
-            <button
-              className="px-3 py-1 bg-red-600 text-white rounded disabled:opacity-50"
-              onClick={() => handleClickStop(idx)}
-              disabled={!lb.initiated}
-            >
-              Stop Time
-            </button>
-          )}
-          {isPaused && (
-            <div className="flex gap-2">
+            <summary className="flex justify-between items-center text-lg font-semibold cursor-pointer p-2 bg-gray-100">
+              <span>
+                {lb.categorie} – Traseu {lb.routeIndex}/{lb.routesCount}
+              </span>
+              <div className="px-2 py-1 text-right text-sm text-gray-600">
+                {typeof controlTimers[idx] === "number"
+                  ? formatTime(controlTimers[idx])
+                  : formatTime(defaultTimerSec(idx))}
+              </div>
+            </summary>
+
+            <ul className="list-disc pl-5 p-2 bg-blue-900 text-white rounded">
+              {lb.concurenti.map((c, i) => {
+                const isClimbing = currentClimbers[idx] === c.nume;
+                return (
+                  <li
+                    key={i}
+                    className={`${
+                      c.marked ? "marked-red " : ""
+                    }${isClimbing ? "bg-yellow-500 text-white animate-pulse " : ""}py-1 px-2 rounded`}
+                  >
+                    {c.nume} – {c.club}
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="mt-2 flex flex-col gap-2">
+              {!lb.initiated && (
+                <button
+                  className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
+                  onClick={() => handleInitiate(idx)}
+                  disabled={lb.initiated}
+                >
+                  Initiate Contest
+                </button>
+              )}
+
+              {!isRunning && !isPaused && (
+                <button
+                  className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+                  onClick={() => handleClickStart(idx)}
+                  disabled={!lb.initiated}
+                >
+                  Start Time
+                </button>
+              )}
+
+              {isRunning && (
+                <button
+                  className="px-3 py-1 bg-red-600 text-white rounded disabled:opacity-50"
+                  onClick={() => handleClickStop(idx)}
+                  disabled={!lb.initiated}
+                >
+                  Stop Time
+                </button>
+              )}
+
+              {isPaused && (
+                <div className="flex gap-2">
+                  <button
+                    className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+                    onClick={() => handleClickResume(idx)}
+                    disabled={!lb.initiated}
+                  >
+                    Resume Time
+                  </button>
+                  <button
+                    className="px-3 py-1 bg-gray-500 text-white rounded disabled:opacity-50"
+                    onClick={() => handleRegisterTime(idx)}
+                    disabled={!lb.initiated || !timeCriterionEnabled}
+                  >
+                    Register Time
+                  </button>
+                </div>
+              )}
+
+              {isPaused && timeCriterionEnabled && registeredTimes[idx] !== undefined && (
+                <div className="text-xs text-gray-700 px-1">Registered: {formatTime(registeredTimes[idx])}</div>
+              )}
+
+              <div className="flex flex-col items-center gap-1">
+                <div className="flex gap-1">
+                  <button
+                    className="px-12 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition flex flex-col items-center disabled:opacity-50"
+                    onClick={() => handleClickHold(idx)}
+                    disabled={!lb.initiated || !isRunning}
+                  >
+                    <div className="flex flex-col items-center">
+                      <span className="text-xs font-medium">{currentClimbers[idx] || ""}</span>
+                      <span>+1 Hold</span>
+                      <span className="text-sm">
+                        Score {holdClicks[idx] || 0} → {lb.holdsCount}
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    className="px-4 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition disabled:opacity-50"
+                    onClick={() => handleHalfHoldClick(idx)}
+                    disabled={!lb.initiated || !isRunning || usedHalfHold[idx]}
+                  >
+                    + .1
+                  </button>
+                </div>
+              </div>
+
               <button
-                className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
-                onClick={() => handleClickResume(idx)}
+                className="px-3 py-1 bg-yellow-500 text-white rounded disabled:opacity-50"
+                onClick={() => {
+                  setActiveBoxId(idx);
+                  requestActiveCompetitor(idx);
+                }}
+                disabled={!lb.initiated || !currentClimbers[idx]}
+              >
+                Insert Score
+              </button>
+
+              <Suspense fallback={null}>
+                <ModalScore
+                  isOpen={showScoreModal && activeBoxId === idx}
+                  competitor={activeCompetitor}
+                  initialScore={holdClicks[idx] || 0}
+                  maxScore={lb.holdsCount}
+                  registeredTime={timeCriterionEnabled ? registeredTimes[idx] : undefined}
+                  onClose={() => setShowScoreModal(false)}
+                  onSubmit={(score) => handleScoreSubmit(score, idx)}
+                />
+              </Suspense>
+
+              <button
+                className="px-3 py-1 bg-green-600 text-white rounded mt-2 disabled:opacity-50"
+                onClick={() => {
+                  const { comp, scores, times } = buildEditLists(idx);
+                  setEditList(comp);
+                  setEditScores(scores);
+                  setEditTimes(times);
+                  setShowModifyModal(true);
+                }}
+                disabled={lb.concurenti.filter(c => c.marked).length === 0}
+              >
+                Modify score
+              </button>
+
+              <ModalModifyScore
+                isOpen={showModifyModal && editList.length > 0}
+                competitors={editList}
+                scores={editScores}
+                times={editTimes}
+                onClose={() => setShowModifyModal(false)}
+                onSubmit={(name, newScore, newTime) => {
+                  persistRankingEntry(idx, name, newScore, newTime);
+                  submitScore(idx, newScore, name, newTime);
+                  setShowModifyModal(false);
+                }}
+              />
+
+              <button
+                className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
+                onClick={() => handleNextRoute(idx)}
+                disabled={!lb.concurenti.every(c => c.marked)}
+              >
+                Next Route
+              </button>
+
+              <button
+                className="px-3 py-1 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50"
+                onClick={() => {
+                  const url = `${window.location.origin}/#/judge/${idx}`;
+                  window.open(url, "_blank");
+                }}
                 disabled={!lb.initiated}
               >
-                Resume Time
+                Open Judge View
               </button>
+
+              <div className="mt-2 flex flex-col items-center">
+                <span className="text-sm">Judge link</span>
+                <QRCode value={judgeUrl} size={96} />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  className="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600"
+                  onClick={() => handleReset(idx)}
+                >
+                  Reset Listbox
+                </button>
+                <button
+                  className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+                  onClick={() => handleDelete(idx)}
+                >
+                  Delete Listbox
+                </button>
+              </div>
+
               <button
-                className="px-3 py-1 bg-gray-500 text-white rounded disabled:opacity-50"
-                onClick={() => handleRegisterTime(idx)}
-                disabled={!lb.initiated || !timeCriterionEnabled}
+                className="mt-2 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                onClick={() => handleGenerateRankings(idx)}
               >
-                Register Time
+                Generate Rankings
               </button>
-            </div>
-          )}
-          {isPaused && timeCriterionEnabled && registeredTimes[idx] !== undefined && (
-            <div className="text-xs text-gray-700 px-1">Registered: {formatTime(registeredTimes[idx])}</div>
-          )}
-          <div className="flex flex-col items-center gap-1">
-            <div className="flex gap-1">
-              <button
-                className="px-12 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition flex flex-col items-center disabled:opacity-50"
-                onClick={() => handleClickHold(idx)}
-                disabled={!lb.initiated || !isRunning}
-              >
-                <div className="flex flex-col items-center">
-                  <span className="text-xs font-medium">{currentClimbers[idx] || ""}</span>
-                  <span>+1 Hold</span>
-                  <span className="text-sm">Score {holdClicks[idx] || 0} → {lb.holdsCount}</span>
+
+              {rankingStatus[idx]?.message && (
+                <div
+                  className={`text-sm mt-1 px-2 py-1 rounded ${
+                    rankingStatus[idx].type === "error" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                  }`}
+                >
+                  {rankingStatus[idx].message}
                 </div>
-              </button>
+              )}
+
               <button
-                className="px-4 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition disabled:opacity-50"
-                onClick={() => handleHalfHoldClick(idx)}
-                disabled={!lb.initiated || !isRunning || usedHalfHold[idx]}
+                className="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                onClick={() => handleCeremony(lb.categorie)}
               >
-                + .1
+                Award Ceremony
               </button>
             </div>
-          </div>
-
-          <button
-            className="px-3 py-1 bg-yellow-500 text-white rounded disabled:opacity-50"
-            onClick={() => {
-              setActiveBoxId(idx);
-              requestActiveCompetitor(idx);
-            }}
-            disabled={!lb.initiated || !currentClimbers[idx]}
-          >
-            Insert Score
-          </button>
-
-
-          <Suspense fallback={null}>
-            <ModalScore
-              isOpen={showScoreModal && activeBoxId === idx}
-              competitor={activeCompetitor}
-              initialScore={holdClicks[idx] || 0}
-              maxScore={lb.holdsCount}
-              registeredTime={timeCriterionEnabled ? registeredTimes[idx] : undefined}
-              onClose={() => setShowScoreModal(false)}
-              onSubmit={(score) => handleScoreSubmit(score, idx)}
-            />
-          </Suspense>
-
-          <button
-            className="px-3 py-1 bg-green-600 text-white rounded mt-2 disabled:opacity-50"
-            onClick={() => {
-              const { comp, scores, times } = buildEditLists(idx);
-              setEditList(comp);
-              setEditScores(scores);
-              setEditTimes(times);
-              setShowModifyModal(true);
-            }}
-            disabled={lb.concurenti.filter(c => c.marked).length === 0}
-          >
-            Modify score
-          </button>
-          <ModalModifyScore
-            isOpen={showModifyModal && editList.length > 0}
-            competitors={editList}
-            scores={editScores}
-            times={editTimes}
-            onClose={() => setShowModifyModal(false)}
-            onSubmit={(name, newScore, newTime) => {
-              persistRankingEntry(idx, name, newScore, newTime);
-              submitScore(idx, newScore, name, newTime);
-              setShowModifyModal(false);
-            }}
-          />
-
-          <button
-            className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
-            onClick={() => handleNextRoute(idx)}
-            disabled={!lb.concurenti.every(c => c.marked)}
-          >
-            Next Route
-          </button>
-
-          <button
-            className="px-3 py-1 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50"
-            onClick={() => {
-              // Deschide ruta de arbitri într-o fereastră nouă
-              const url = `${window.location.origin}/#/judge/${idx}`;
-              window.open(url, "_blank");
-            }}
-            disabled={!lb.initiated}
-          >
-            Open Judge View
-          </button>
-          <div className="mt-2 flex flex-col items-center">
-            <span className="text-sm">Judge link</span>
-            <QRCode value={judgeUrl} size={96} />
-          </div>
-
-        <div className="flex gap-2">
-        <button
-          className="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600"
-          onClick={() => handleReset(idx)}
-        >
-          Reset Listbox
-        </button>
-        <button
-          className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-          onClick={() => handleDelete(idx)}
-        >
-          Delete Listbox
-        </button>
-      </div>
-      <button
-        className="mt-2 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-        onClick={() => handleGenerateRankings(idx)}
-      >
-        Generate Rankings
-      </button>
-      {rankingStatus[idx]?.message && (
-        <div
-          className={`text-sm mt-1 px-2 py-1 rounded ${
-            rankingStatus[idx].type === "error" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
-          }`}
-        >
-          {rankingStatus[idx].message}
-        </div>
-      )}
-      <button
-        className="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-        onClick={() => handleCeremony(lb.categorie)}
-      >
-        Award Ceremony
-        </button>
-        </div>
-      
-  </details>
+          </details>
         );
-        })}
-      </div>
+      })}
     </div>
-  );
+  </div>
+);
 };
 
 export default ControlPanel;

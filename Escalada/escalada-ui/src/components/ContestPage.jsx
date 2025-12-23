@@ -171,78 +171,132 @@ const ContestPage = () => {
     }
   }, []);
 
-  // --- WebSocket logic ---
+  // --- WebSocket logic with reconnection and safe cleanup ---
   const wsRef = useRef(null);
-    useEffect(() => {
-      const ws = new WebSocket(`${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${boxId}`);
+  const reconnectRef = useRef({ tries: 0, shouldReconnect: true });
+  useEffect(() => {
+    reconnectRef.current.shouldReconnect = true;
+
+    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${boxId}`;
+
+    const handleMessage = (msg) => {
+      if (msg.type === 'INIT_ROUTE') {
+        const { routeIndex, competitors, holdsCount } = msg;
+        setRouteIdx(routeIndex);
+        setHoldsCount(holdsCount);
+        if (competitors?.length) {
+          setClimbing(competitors[0].nume);
+          setPreparing(competitors.slice(1, 2).map(c => c.nume));
+          setRemaining(competitors.slice(2).map(c => c.nume));
+        } else {
+          setClimbing("");
+          setPreparing([]);
+          setRemaining([]);
+        }
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        setRunning(false);
+        setEndTimeMs(null);
+        endTimeRef.current = null;
+        const preset = getTimerPreset();
+        const [m, s] = preset.split(":").map(Number);
+        const resetVal = (m || 0) * 60 + (s || 0);
+        setTimerSec(resetVal);
+        timerSecRef.current = resetVal;
+        return;
+      }
+      if (msg.type === 'START_TIMER') {
+        window.postMessage({ type: 'START_TIMER', boxId: msg.boxId }, '*');
+      }
+      if (msg.type === 'STOP_TIMER') {
+        window.postMessage({ type: 'STOP_TIMER', boxId: msg.boxId }, '*');
+      }
+      if (msg.type === 'RESUME_TIMER') {
+        window.postMessage({ type: 'RESUME_TIMER', boxId: msg.boxId }, '*');
+      }
+      if (msg.type === 'PROGRESS_UPDATE') {
+        window.postMessage({ type: 'PROGRESS_UPDATE', boxId: msg.boxId, delta: msg.delta }, '*');
+      }
+      if (msg.type === 'REQUEST_ACTIVE_COMPETITOR') {
+        localStorage.setItem(
+          'climb_response',
+          JSON.stringify({
+            type: 'RESPONSE_ACTIVE_COMPETITOR',
+            boxId: msg.boxId,
+            competitor: climbingRef.current,
+            ts: Date.now(),
+          })
+        );
+      }
+      if (msg.type === 'SUBMIT_SCORE') {
+        window.postMessage(
+          {
+            type: 'SUBMIT_SCORE',
+            boxId: msg.boxId,
+            score: msg.score,
+            competitor: msg.competitor,
+            registeredTime: msg.registeredTime,
+          },
+          '*'
+        );
+      }
+    };
+
+    const connect = () => {
+      const ws = new WebSocket(url);
       wsRef.current = ws;
-      ws.onmessage = (ev) => {
-        const msg = JSON.parse(ev.data);
-        // Handle INIT_ROUTE via WebSocket
-        if (msg.type === 'INIT_ROUTE') {
-          const { routeIndex, competitors, holdsCount } = msg;
-          setRouteIdx(routeIndex);
-          setHoldsCount(holdsCount);
-          if (competitors?.length) {
-            setClimbing(competitors[0].nume);
-            setPreparing(competitors.slice(1,2).map(c => c.nume));
-            setRemaining(competitors.slice(2).map(c => c.nume));
-          } else {
-            setClimbing("");
-            setPreparing([]);
-            setRemaining([]);
-          }
-          // stop and reset timer
-          if (rafRef.current) cancelAnimationFrame(rafRef.current);
-          setRunning(false);
-          setEndTimeMs(null);
-          endTimeRef.current = null;
-          const preset = getTimerPreset();
-          const [m, s] = preset.split(":").map(Number);
-          const resetVal = (m || 0) * 60 + (s || 0);
-          setTimerSec(resetVal);
-          timerSecRef.current = resetVal;
-          return;
-        }
-        if (msg.type === 'START_TIMER') {
-          window.postMessage({ type: 'START_TIMER', boxId: msg.boxId }, '*');
-        }
-        if (msg.type === 'STOP_TIMER') {
-          window.postMessage({ type: 'STOP_TIMER', boxId: msg.boxId }, '*');
-        }
-        if (msg.type === 'RESUME_TIMER') {
-          window.postMessage({ type: 'RESUME_TIMER', boxId: msg.boxId }, '*');
-        }
-        if (msg.type === 'PROGRESS_UPDATE') {
-          window.postMessage({ type: 'PROGRESS_UPDATE', boxId: msg.boxId, delta: msg.delta }, '*');
-        }
-        if (msg.type === 'REQUEST_ACTIVE_COMPETITOR') {
-          // Respond with the current climber name via localStorage for ControlPanel
-          localStorage.setItem(
-            'climb_response',
-            JSON.stringify({
-              type: 'RESPONSE_ACTIVE_COMPETITOR',
-              boxId: msg.boxId,
-              competitor: climbingRef.current,
-              ts: Date.now(),
-            })
-          );
-        }
-        if (msg.type === 'SUBMIT_SCORE') {
-          window.postMessage(
-            {
-              type: 'SUBMIT_SCORE',
-              boxId: msg.boxId,
-              score: msg.score,
-              competitor: msg.competitor,
-              registeredTime: msg.registeredTime,
-            },
-            '*'
-          );
-        }
+
+      ws.onopen = () => {
+        reconnectRef.current.tries = 0;
+        try {
+          ws.send(JSON.stringify({ type: 'REQUEST_STATE', boxId: Number(boxId) }));
+        } catch {}
       };
-      return () => ws.close();
-    }, [boxId, getTimerPreset]);
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          handleMessage(msg);
+        } catch {}
+      };
+
+      ws.onerror = () => {
+        // swallow errors during handshake
+      };
+
+      ws.onclose = () => {
+        if (!reconnectRef.current.shouldReconnect) return;
+        const delay = Math.min(1000 * 2 ** reconnectRef.current.tries, 15000);
+        reconnectRef.current.tries += 1;
+        setTimeout(connect, delay);
+      };
+    };
+
+    connect();
+
+    return () => {
+      reconnectRef.current.shouldReconnect = false;
+      const ws = wsRef.current;
+      wsRef.current = null;
+      if (!ws) return;
+      try {
+        // Detach handlers to avoid side effects after unmount
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+      } catch {}
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close(1000, 'navigate-away');
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          // Avoid closing while CONNECTING (causes browser warning). Close once it opens.
+          ws.addEventListener('open', () => {
+            try { ws.close(1000, 'navigate-away'); } catch {}
+          }, { once: true });
+        }
+      } catch {}
+    };
+  }, [boxId, getTimerPreset]);
   const [preparing, setPreparing] = useState([]);
   
   const [climbing, setClimbing] = useState("");

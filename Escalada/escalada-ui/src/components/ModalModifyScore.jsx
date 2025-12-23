@@ -86,6 +86,8 @@ const ModalModifyScore = ({
             className="w-full border p-2 rounded"
             type="number"
             step="0.1"
+            id="modify-score-input"
+            name="score"
             value={score}
             onChange={e => setScore(e.target.value)}
             required
@@ -95,6 +97,8 @@ const ModalModifyScore = ({
             className="w-full border p-2 rounded"
             type="text"
             placeholder="mm:ss"
+            id="modify-time-input"
+            name="time"
             value={timeValue}
             onChange={e => setTimeValue(e.target.value)}
           />

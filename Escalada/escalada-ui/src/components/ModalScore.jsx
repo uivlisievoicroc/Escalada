@@ -58,6 +58,8 @@ const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, registered
           <input
             type="number"
             step="0.1"
+            id="modal-score-input"
+            name="score"
             className="border border-gray-300 p-2 rounded w-full"
             value={score}
             onChange={(e) => setScore(e.target.value)}

@@ -72,6 +72,8 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
       <form onSubmit={handleSubmit} className="space-y-4">
         <input
           type="text"
+          id="upload-category"
+          name="category"
           placeholder="Categorie (ex: U16-Baieti)"
           value={category}
           onChange={(e) => setCategory(e.target.value)}
@@ -82,6 +84,8 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
         <input
           type="number"
           min="1"
+          id="upload-routes-count"
+          name="routesCount"
           placeholder="Nr of routes"
           value={routesCount}
           onChange={(e) => {
@@ -99,6 +103,8 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
               key={i}
               type="number"
               min="1"
+              id={`upload-holds-${i + 1}`}
+              name={`holdsRoute${i + 1}`}
               placeholder={`Nr of holds, Route ${i + 1}`}
               value={holdsCounts[i] || ""}
               onChange={(e) => {
