@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 state_map: Dict[int, dict] = {}
 state_locks: Dict[int, asyncio.Lock] = {}  # Lock per boxId
+init_lock = asyncio.Lock()  # Protects state_map and state_locks initialization
 time_criterion_enabled: bool = False
 time_criterion_lock = asyncio.Lock()  # Global time criterion lock
 
@@ -57,6 +58,9 @@ class Cmd(BaseModel):
     
     # legacy alias for registeredTime
     time: float | None = None
+    
+    # Session token for state bleed prevention
+    sessionId: str | None = None
 
 @router.post("/cmd")
 async def cmd(cmd: Cmd):
@@ -110,10 +114,29 @@ async def cmd(cmd: Cmd):
     
     print(f"Backend received cmd: {cmd}")
 
-    
-    # Get or create lock for this boxId
-    if cmd.boxId not in state_locks:
-        state_locks[cmd.boxId] = asyncio.Lock()
+    # ==================== ATOMIC STATE INITIALIZATION ====================
+    # Use global init_lock to prevent race conditions when creating state_map/state_locks
+    async with init_lock:
+        if cmd.boxId not in state_locks:
+            state_locks[cmd.boxId] = asyncio.Lock()
+        if cmd.boxId not in state_map:
+            import uuid
+            state_map[cmd.boxId] = {
+                "initiated": False,
+                "holdsCount": 0,
+                "currentClimber": "",
+                "started": False,
+                "timerState": "idle",
+                "holdCount": 0.0,
+                "routeIndex": 1,
+                "competitors": [],
+                "categorie": "",
+                "lastRegisteredTime": None,
+                "remaining": None,
+                "timerPreset": None,
+                "timerPresetSec": None,
+                "sessionId": str(uuid.uuid4()),  # Generated at creation, not at INIT_ROUTE
+            }
     
     lock = state_locks[cmd.boxId]
     
@@ -128,27 +151,45 @@ async def cmd(cmd: Cmd):
     # Lock state access for this boxId
     async with lock:
         # Update server-side state snapshot
-        sm = state_map.setdefault(cmd.boxId, {
-            "initiated": False,
-            "holdsCount": 0,
-            "currentClimber": "",
-            "started": False,
-            "timerState": "idle",
-            "holdCount": 0.0,
-            "routeIndex": 1,
-            "competitors": [],
-            "categorie": "",
-            "lastRegisteredTime": None,
-            "remaining": None,
-            "timerPreset": None,
-            "timerPresetSec": None,
-        })
+        sm = state_map[cmd.boxId]
+        
+        # ==================== SESSION VALIDATION ====================
+        # If command has sessionId, verify it matches current session
+        if cmd.sessionId is not None:
+            current_session = sm.get("sessionId")
+            if current_session is not None and cmd.sessionId != current_session:
+                logger.warning(f'Stale session for box {cmd.boxId}: got {cmd.sessionId}, expected {current_session}')
+                return {"status": "ignored", "reason": "stale_session"}
+        
         if cmd.type == "INIT_ROUTE":
+            # INIT_ROUTE: update competition details and mark as initiated
+            # sessionId already generated at state creation
+            cmd.sessionId = sm["sessionId"]  # Use existing sessionId
             sm["initiated"] = True
             sm["holdsCount"] = cmd.holdsCount or 0
             sm["routeIndex"] = cmd.routeIndex or 1
-            sm["competitors"] = cmd.competitors or []
-            sm["currentClimber"] = cmd.competitors[0]["nume"] if cmd.competitors else ""
+            # Normalize competitors: ensure dicts with safe 'nume' and boolean 'marked'
+            normalized_competitors: list[dict] = []
+            if cmd.competitors:
+                for comp in cmd.competitors:
+                    try:
+                        if not isinstance(comp, dict):
+                            continue
+                        name = comp.get("nume")
+                        if not isinstance(name, str):
+                            continue
+                        safe_name = InputSanitizer.sanitize_competitor_name(name)
+                        if not safe_name:
+                            continue
+                        marked_val = comp.get("marked", False)
+                        # Coerce to boolean if present
+                        marked_bool = bool(marked_val) if isinstance(marked_val, (bool, int, str)) else False
+                        normalized_competitors.append({"nume": safe_name, "marked": marked_bool})
+                    except Exception:
+                        # Silently skip malformed competitor entries
+                        continue
+            sm["competitors"] = normalized_competitors
+            sm["currentClimber"] = normalized_competitors[0]["nume"] if normalized_competitors else ""
             sm["started"] = False
             sm["timerState"] = "idle"
             sm["holdCount"] = 0.0
@@ -174,6 +215,13 @@ async def cmd(cmd: Cmd):
         elif cmd.type == "PROGRESS_UPDATE":
             delta = cmd.delta or 1
             new_count = (int(sm["holdCount"]) + 1) if delta == 1 else round(sm["holdCount"] + delta, 1)
+            # Clamp lower bound
+            if new_count < 0:
+                new_count = 0.0
+            # Cap to holdsCount only when it's a positive configured maximum
+            max_holds = sm.get("holdsCount") or 0
+            if isinstance(max_holds, int) and max_holds > 0 and new_count > max_holds:
+                new_count = float(max_holds)
             sm["holdCount"] = new_count
         elif cmd.type == "REGISTER_TIME":
             # doar persistăm dacă avem un timp valid
@@ -258,7 +306,12 @@ async def websocket_endpoint(ws: WebSocket, box_id: int):
     
     try:
         while True:
-            data = await ws.receive_text()
+            try:
+                # Enforce receive timeout to complement heartbeat
+                data = await asyncio.wait_for(ws.receive_text(), timeout=heartbeat_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"WebSocket receive timeout for box {box_id}")
+                break
             
             # Handle PONG response
             try:
@@ -292,10 +345,34 @@ from fastapi import HTTPException
 async def get_state(box_id: int):
     """
     Return current contest state for a judge client.
+    Create a placeholder state with sessionId if box doesn't exist yet.
     """
-    state = state_map.get(box_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="No state found for this box")
+    # ==================== ATOMIC STATE INITIALIZATION ====================
+    # Use global init_lock to prevent race conditions
+    async with init_lock:
+        if box_id not in state_locks:
+            state_locks[box_id] = asyncio.Lock()
+        if box_id not in state_map:
+            # Create default state with sessionId in advance
+            import uuid
+            state_map[box_id] = {
+                "initiated": False,
+                "holdsCount": 0,
+                "currentClimber": "",
+                "started": False,
+                "timerState": "idle",
+                "holdCount": 0.0,
+                "routeIndex": 1,
+                "competitors": [],
+                "categorie": "",
+                "lastRegisteredTime": None,
+                "remaining": None,
+                "timerPreset": None,
+                "timerPresetSec": None,
+                "sessionId": str(uuid.uuid4()),  # Generated for new boxes
+            }
+    
+    state = state_map[box_id]
     return _build_snapshot(box_id, state)
 
 
@@ -318,6 +395,7 @@ def _build_snapshot(box_id: int, state: dict) -> dict:
         "timeCriterionEnabled": time_criterion_enabled,
         "timerPreset": state.get("timerPreset"),
         "timerPresetSec": state.get("timerPresetSec"),
+        "sessionId": state.get("sessionId"),  # Include session ID for client validation
     }
 
 

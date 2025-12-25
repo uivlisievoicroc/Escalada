@@ -53,13 +53,14 @@ class JWTTokenCreationTest(unittest.TestCase):
     def test_create_access_token_default_expiry(self):
         """Test token has default expiration"""
         from escalada.auth import create_access_token
+        from datetime import UTC
         
         data = {"sub": "testuser"}
         token = create_access_token(data)
         
         decoded = jwt.decode(token, options={"verify_signature": False})
         exp_timestamp = decoded["exp"]
-        now_timestamp = datetime.utcnow().timestamp()
+        now_timestamp = datetime.now(UTC).timestamp()
         
         # Should expire in the future (at least 5 minutes, at most 3 hours)
         time_diff = exp_timestamp - now_timestamp

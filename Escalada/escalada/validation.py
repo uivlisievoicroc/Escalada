@@ -3,7 +3,7 @@ Input validation schemas using Pydantic v2
 Validates all command types and API inputs
 """
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Dict, List, Optional, Self
 import logging
 import re
@@ -56,6 +56,9 @@ class ValidatedCmd(BaseModel):
     
     # For SUBMIT_SCORE (competitor index)
     competitorIdx: Optional[int] = Field(None, ge=0, le=1000)
+    
+    # Session token to prevent state bleed between box deletions
+    sessionId: Optional[str] = Field(None, min_length=1, max_length=64, description="Box session token")
     
     @field_validator('type')
     @classmethod
@@ -223,8 +226,7 @@ class ValidatedCmd(BaseModel):
         
         return self
     
-    class Config:
-        extra = 'forbid'  # Forbid unknown fields
+    model_config = ConfigDict(extra='forbid')  # Forbid unknown fields
 
 
 class RateLimitConfig:

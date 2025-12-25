@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, registerTime } from '../utilis/contestActions';
+import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, registerTime, getSessionId, setSessionId } from '../utilis/contestActions';
 import ModalScore from './ModalScore';
 import ModalModifyScore from './ModalModifyScore';
 
@@ -47,6 +47,8 @@ const JudgePage = () => {
   };
   // WebSocket subscription to backend for real-time updates
   const wsRef = useRef(null);
+  const [wsStatus, setWsStatus] = useState("connecting");
+  const [wsError, setWsError] = useState("");
 
   const formatTime = (sec) => {
     if (typeof sec !== "number" || Number.isNaN(sec)) return "—";
@@ -78,6 +80,36 @@ const JudgePage = () => {
     }
   }, [idx]);
 
+  // ==================== FIX 2: WATCH BOXVERSION CHANGES ====================
+  // If reset happens (boxVersion changes) in ControlPanel, refresh Judge state
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === `boxVersion-${idx}` && e.newValue !== e.oldValue) {
+        console.log(`📦 boxVersion-${idx} changed from ${e.oldValue} to ${e.newValue}, refreshing Judge state...`);
+        // Re-fetch state from server to sync with new version
+        (async () => {
+          try {
+            const res = await fetch(`${API_BASE}/api/state/${idx}`);
+            if (res.ok) {
+              const st = await res.json();
+              setInitiated(st.initiated);
+              setMaxScore(st.holdsCount);
+              setCurrentClimber(st.currentClimber);
+              setTimerState(st.timerState || (st.started ? "running" : "idle"));
+              setHoldCount(st.holdCount);
+              applyTimerPresetSnapshot(st);
+            }
+          } catch (err) {
+            console.error("Failed to refresh state after boxVersion change", err);
+          }
+        })();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [idx, API_BASE]);
+
 useEffect(() => {
     // Fetch initial state snapshot (manual reconnection)
     (async () => {
@@ -85,6 +117,11 @@ useEffect(() => {
         const res = await fetch(`${API_BASE}/api/state/${idx}`);
         if (res.ok) {
           const st = await res.json();
+          // ==================== FIX 3: PERSIST SESSION ID ====================
+          // Store sessionId from server response to include in future commands
+          if (st.sessionId) {
+            setSessionId(idx, st.sessionId);
+          }
           setInitiated(st.initiated);
           setMaxScore(st.holdsCount);
           setCurrentClimber(st.currentClimber);
@@ -115,6 +152,11 @@ useEffect(() => {
     // Build WebSocket URL based on how the page was loaded
     const WS_URL = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}`;
     const ws = new WebSocket(WS_URL);
+    setWsStatus("connecting");
+    setWsError("");
+    ws.onopen = () => {
+      setWsStatus("open");
+    };
     // No ws.send REQUEST_STATE on open anymore
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
@@ -211,6 +253,17 @@ useEffect(() => {
         setCurrentClimber(msg.competitor || '');
       }
     };
+    ws.onerror = (ev) => {
+      setWsStatus("closed");
+      try {
+        setWsError(typeof ev?.message === "string" ? ev.message : "WebSocket error");
+      } catch {
+        setWsError("WebSocket error");
+      }
+    };
+    ws.onclose = () => {
+      setWsStatus("closed");
+    };
     wsRef.current = ws;
     return () => ws.close();
   }, [idx, API_BASE, WS_PROTOCOL, clearRegisteredTime]);
@@ -304,12 +357,22 @@ useEffect(() => {
 
   // Handler for +1 Hold
   const handleHoldClick = () => {
+    const max = Number(maxScore ?? 0);
+    const current = Number(holdCount ?? 0);
+    if (max > 0 && current >= max) {
+      return;
+    }
     updateProgress(idx, 1);
     setUsedHalfHold(false);
   };
 
   // Handler for +0.1 Hold
   const handleHalfHoldClick = () => {
+    const max = Number(maxScore ?? 0);
+    const current = Number(holdCount ?? 0);
+    if (max > 0 && current >= max) {
+      return;
+    }
     updateProgress(idx, 0.1);
     setUsedHalfHold(true);
   };
@@ -341,6 +404,11 @@ useEffect(() => {
 
   return (
     <div className="p-20 flex flex-col gap-2">
+      {wsStatus !== "open" && (
+        <div className="mb-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+          WS: {wsStatus}. {wsError ? `(${wsError})` : "Check host IP and that port 8000 is reachable."}
+        </div>
+      )}
       {!isRunning && !isPaused && (
         <button
           className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
@@ -384,7 +452,8 @@ useEffect(() => {
       <button
         className="mt-10 px-12 py-12 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition flex flex-col items-center disabled:opacity-50"
         onClick={handleHoldClick}
-        disabled={!initiated || !isRunning}
+        disabled={!initiated || !isRunning || (Number(maxScore ?? 0) > 0 && Number(holdCount ?? 0) >= Number(maxScore ?? 0))}
+        title={(Number(maxScore ?? 0) > 0 && Number(holdCount ?? 0) >= Number(maxScore ?? 0)) ? "Top reached! Climber cannot climb over the top :)" : "Add 1 hold"}
         >
         <div className="flex flex-col items-center">
             <span className="text-xs font-medium">{currentClimber || ''}</span>
@@ -395,7 +464,8 @@ useEffect(() => {
         <button
           className="mt-10 px-4 py-5 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handleHalfHoldClick}
-          disabled={!initiated || !isRunning || usedHalfHold}
+          disabled={!initiated || !isRunning || usedHalfHold || (Number(maxScore ?? 0) > 0 && Number(holdCount ?? 0) >= Number(maxScore ?? 0))}
+          title={(Number(maxScore ?? 0) > 0 && Number(holdCount ?? 0) >= Number(maxScore ?? 0)) ? "Top reached! Climber cannot climb over the top :)" : "Add 0.1 hold"}
         >
           + .1
         </button>

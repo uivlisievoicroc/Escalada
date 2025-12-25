@@ -2,10 +2,11 @@ import QRCode from 'react-qr-code';
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import ModalUpload from "./ModalUpload";
 import ModalTimer from "./ModalTimer";
-import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime } from '../utilis/contestActions';
+import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime, getSessionId, setSessionId } from '../utilis/contestActions';
 import ModalModifyScore from "./ModalModifyScore";
 import getWinners from '../utilis/getWinners';
 import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
+import { normalizeStorageValue } from '../utilis/normalizeStorageValue';
 
 // Map boxId -> reference to the opened contest tab
 const openTabs = {};
@@ -159,6 +160,26 @@ const ControlPanel = () => {
     propagateTimeCriterion(timeCriterionEnabled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Ensure we always have a fresh sessionId per box (needed for state isolation)
+  useEffect(() => {
+    const config = getApiConfig();
+    listboxes.forEach((_, idx) => {
+      (async () => {
+        try {
+          const res = await fetch(`${config.API_CP.replace("/cmd", "")}/state/${idx}`);
+          if (res.ok) {
+            const st = await res.json();
+            if (st?.sessionId) {
+              setSessionId(idx, st.sessionId);
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to prefetch state/session for box ${idx}`, err);
+        }
+      })();
+    });
+  }, [listboxes]);
   useEffect(() => {
     const disconnectFns = {}; // Track disconnect functions from hooks
     
@@ -235,6 +256,9 @@ const ControlPanel = () => {
               }
               break;
             case 'STATE_SNAPSHOT':
+              if (msg.sessionId) {
+                setSessionId(idx, msg.sessionId);
+              }
               setTimerStates(prev => ({ ...prev, [idx]: msg.timerState || (msg.started ? "running" : "idle") }));
               if (typeof msg.holdCount === "number") {
                 setHoldClicks(prev => ({ ...prev, [idx]: msg.holdCount }));
@@ -539,29 +563,32 @@ const ControlPanel = () => {
 
   useEffect(() => {
     const handleStorageClimber = (e) => {
-      if (e.key?.startsWith("currentClimber-")) {
-        const idx = Number(e.key.split("-")[1]);
-        const competitorName = (e.newValue || "").trim();
-        setCurrentClimbers(prev => ({
-          ...prev,
-          [idx]: e.newValue
-        }));
-        // broadcast to WS listeners
-        if (!competitorName) {
-          return; // evită 400 când competitorul e gol
-        }
-        const config = getApiConfig();
-        fetch(config.API_CP, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            boxId: idx,
-            type: 'ACTIVE_CLIMBER',
-            competitor: competitorName
-          })
-        }).catch(err => console.error("ACTIVE_CLIMBER failed", err));
+      if (!e.key?.startsWith("currentClimber-")) return;
+      const idx = Number(e.key.split("-")[1]);
+      const competitorName = normalizeStorageValue(e.newValue);
+
+      if (!competitorName) {
+        return; // ignore empty/invalid values
       }
+
+      setCurrentClimbers(prev => ({
+        ...prev,
+        [idx]: competitorName
+      }));
+
+      const config = getApiConfig();
+      fetch(config.API_CP, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boxId: idx,
+          type: 'ACTIVE_CLIMBER',
+          competitor: competitorName,
+          sessionId: getSessionId(idx),
+        })
+      }).catch(err => console.error("ACTIVE_CLIMBER failed", err));
     };
+
     window.addEventListener("storage", handleStorageClimber);
     return () => window.removeEventListener("storage", handleStorageClimber);
   }, []);
@@ -671,12 +698,78 @@ const ControlPanel = () => {
   };
 
   const handleDelete = (index) => {
+    // ==================== FIX 2: EXPLICIT WS CLOSE ====================
+    // Close WebSocket BEFORE deleting from state to prevent ghost WS
+    const ws = wsRefs.current[index];
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      console.log(`Closing WebSocket for deleted box ${index}`);
+      ws.close(1000, "Box deleted");
+    }
+    delete wsRefs.current[index];
+    
     // Optional: clean up tab reference when deleted
     if (openTabs[index] && !openTabs[index].closed) {
       openTabs[index].close();
     }
     delete openTabs[index];
-    setListboxes((prev) => prev.filter((_, i) => i !== index));
+    
+    // ==================== FIX 2: CLEAR SESSION ID ====================
+    // Remove session ID and box version to invalidate old Judge tabs
+    try {
+      localStorage.removeItem(`sessionId-${index}`);
+      localStorage.removeItem(`boxVersion-${index}`);
+    } catch (err) {
+      console.error("Failed to clear session/version on delete", err);
+    }
+    
+    setListboxes((prev) => {
+      const filtered = prev.filter((_, i) => i !== index);
+      
+      // ==================== FIX 1: REINDEX BOXVERSION ====================
+      // After delete, renumber localStorage keys for all remaining boxes
+      // Map old indices to new indices after filter
+      const indexMap = {};
+      let newIdx = 0;
+      prev.forEach((_, oldIdx) => {
+        if (oldIdx !== index) {
+          indexMap[oldIdx] = newIdx++;
+        }
+      });
+      // Renumber localStorage keys
+      Object.entries(indexMap).forEach(([oldIdx, newIdx]) => {
+        const oldIdxNum = Number(oldIdx);
+        if (oldIdxNum !== newIdx) {
+          // Move boxVersion from old index to new index
+          const oldVersionKey = `boxVersion-${oldIdxNum}`;
+          const newVersionKey = `boxVersion-${newIdx}`;
+          const version = localStorage.getItem(oldVersionKey);
+          if (version) {
+            localStorage.setItem(newVersionKey, version);
+            localStorage.removeItem(oldVersionKey);
+          }
+          // Move sessionId from old index to new index
+          const oldSessionKey = `sessionId-${oldIdxNum}`;
+          const newSessionKey = `sessionId-${newIdx}`;
+          const sessionId = localStorage.getItem(oldSessionKey);
+          if (sessionId) {
+            localStorage.setItem(newSessionKey, sessionId);
+            localStorage.removeItem(oldSessionKey);
+          }
+          // Move other per-box localStorage keys
+          ['timer', 'registeredTime', 'climbingTime', 'ranking', 'rankingTimes'].forEach(key => {
+            const oldKey = `${key}-${oldIdxNum}`;
+            const newKey = `${key}-${newIdx}`;
+            const value = localStorage.getItem(oldKey);
+            if (value) {
+              localStorage.setItem(newKey, value);
+              localStorage.removeItem(oldKey);
+            }
+          });
+        }
+      });
+      
+      return filtered;
+    });
     // remove counters for deleted box
     setHoldClicks(prev => {
       const { [index]: _, ...rest } = prev;
@@ -707,6 +800,15 @@ const ControlPanel = () => {
 
   // Reset listbox to its initial state
   const handleReset = (index) => {
+    const boxToReset = listboxes[index];
+    
+    // ==================== FIX 3: GUARD HOLDSCOUNT ARRAY ====================
+    // Validate that holdsCounts exists and has at least one element before reset
+    if (!boxToReset || !Array.isArray(boxToReset.holdsCounts) || boxToReset.holdsCounts.length === 0) {
+      console.error(`Cannot reset box ${index}: missing or empty holdsCounts array`, boxToReset);
+      return;
+    }
+    
     setListboxes(prev =>
       prev
         .map((lb, i) => {
@@ -835,6 +937,12 @@ const ControlPanel = () => {
 
   const handleClickHold = async (boxIdx) => {
     try {
+      const box = listboxesRef.current[boxIdx] || listboxes[boxIdx];
+      const max = Number(box?.holdsCount ?? 0);
+      const current = Number(holdClicksRef.current[boxIdx] ?? holdClicks[boxIdx] ?? 0);
+      if (max > 0 && current >= max) {
+        return;
+      }
       await updateProgress(boxIdx, 1);
     } catch (err) {
       console.error("PROGRESS_UPDATE failed:", err);
@@ -843,6 +951,12 @@ const ControlPanel = () => {
 
   const handleHalfHoldClick = async (boxIdx) => {
     try {
+      const box = listboxesRef.current[boxIdx] || listboxes[boxIdx];
+      const max = Number(box?.holdsCount ?? 0);
+      const current = Number(holdClicksRef.current[boxIdx] ?? holdClicks[boxIdx] ?? 0);
+      if (max > 0 && current >= max) {
+        return;
+      }
       await updateProgress(boxIdx, 0.1);
     } catch (err) {
       console.error("PROGRESS_UPDATE 0.1 failed:", err);
@@ -1138,7 +1252,8 @@ const ControlPanel = () => {
                   <button
                     className="px-12 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition flex flex-col items-center disabled:opacity-50"
                     onClick={() => handleClickHold(idx)}
-                    disabled={!lb.initiated || !isRunning}
+                    disabled={!lb.initiated || !isRunning || (Number(lb.holdsCount ?? 0) > 0 && Number(holdClicks[idx] ?? 0) >= Number(lb.holdsCount ?? 0))}
+                    title={(Number(lb.holdsCount ?? 0) > 0 && Number(holdClicks[idx] ?? 0) >= Number(lb.holdsCount ?? 0)) ? "Top reached! Climber cannot climb over the top :)" : "Add 1 hold"}
                   >
                     <div className="flex flex-col items-center">
                       <span className="text-xs font-medium">{currentClimbers[idx] || ""}</span>
@@ -1151,7 +1266,8 @@ const ControlPanel = () => {
                   <button
                     className="px-4 py-3 bg-purple-600 text-white rounded hover:bg-purple-700 active:scale-95 transition disabled:opacity-50"
                     onClick={() => handleHalfHoldClick(idx)}
-                    disabled={!lb.initiated || !isRunning || usedHalfHold[idx]}
+                    disabled={!lb.initiated || !isRunning || usedHalfHold[idx] || (Number(lb.holdsCount ?? 0) > 0 && Number(holdClicks[idx] ?? 0) >= Number(lb.holdsCount ?? 0))}
+                    title={(Number(lb.holdsCount ?? 0) > 0 && Number(holdClicks[idx] ?? 0) >= Number(lb.holdsCount ?? 0)) ? "Top reached! Climber cannot climb over the top :)" : "Add 0.1 hold"}
                   >
                     + .1
                   </button>
