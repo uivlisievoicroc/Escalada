@@ -1,16 +1,22 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, registerTime, getSessionId, setSessionId } from '../utilis/contestActions';
+import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
 import ModalScore from './ModalScore';
 import ModalModifyScore from './ModalModifyScore';
 
 const JudgePage = () => {
+  console.log('🟡 [JudgePage] Component rendering START');
+  
   const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
   const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000`;
   const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
   const { boxId } = useParams();
   const idx = Number(boxId);
+  console.log('🟡 [JudgePage] boxId from params:', boxId, 'idx:', idx);
+  console.log('🟡 [JudgePage] API_BASE:', API_BASE);
+  console.log('🟡 [JudgePage] WS_PROTOCOL:', WS_PROTOCOL);
   const [initiated, setInitiated] = useState(false);
   const [timerState, setTimerState] = useState("idle");
   const [usedHalfHold, setUsedHalfHold] = useState(false);
@@ -45,19 +51,8 @@ const JudgePage = () => {
     }
     return presetToSec(getTimerPreset());
   };
-  // WebSocket subscription to backend for real-time updates
-  const wsRef = useRef(null);
-  const [wsStatus, setWsStatus] = useState("connecting");
-  const [wsError, setWsError] = useState("");
 
-  const formatTime = (sec) => {
-    if (typeof sec !== "number" || Number.isNaN(sec)) return "—";
-    const m = Math.floor(sec / 60).toString().padStart(2, "0");
-    const s = (sec % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
-  };
-
-  const applyTimerPresetSnapshot = (snapshot) => {
+  const applyTimerPresetSnapshot = useCallback((snapshot) => {
     if (!snapshot) return;
     if (typeof snapshot.timerPresetSec === "number") {
       setServerTimerPresetSec(snapshot.timerPresetSec);
@@ -69,9 +64,14 @@ const JudgePage = () => {
         setServerTimerPresetSec(parsedPreset);
       }
     }
-  };
+  }, []);
 
-  const clearRegisteredTime = React.useCallback(() => {
+  // WebSocket subscription to backend for real-time updates
+  const [wsStatus, setWsStatus] = useState("connecting");
+  const [wsError, setWsError] = useState("");
+  const [showWsBanner, setShowWsBanner] = useState(true);
+
+  const clearRegisteredTime = useCallback(() => {
     setRegisteredTime(null);
     try {
       localStorage.removeItem(`registeredTime-${idx}`);
@@ -79,6 +79,181 @@ const JudgePage = () => {
       console.error("Failed clearing registered time", err);
     }
   }, [idx]);
+
+  // Build WebSocket URL - memoized to prevent infinite render loop
+  const WS_URL = useMemo(() => {
+    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}`;
+    console.log('🟡 [JudgePage] WS_URL memoized:', url);
+    return url;
+  }, [idx, WS_PROTOCOL]);
+
+  // Message handler for all incoming WS messages
+  const handleWsMessage = useCallback((msg) => {
+    console.log('🟢 [JudgePage] Handler called with:', msg);
+    
+    if (msg.type === 'TIME_CRITERION') {
+      setTimeCriterionEnabled(!!msg.timeCriterionEnabled);
+      localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
+      return;
+    }
+    if (msg.type === 'TIMER_SYNC') {
+      if (+msg.boxId !== idx) return;
+      if (typeof msg.remaining === "number") {
+        setTimerSeconds(msg.remaining);
+        localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
+      }
+      return;
+    }
+    if (+msg.boxId !== idx) return;
+    
+    if (msg.type === 'INIT_ROUTE') {
+      console.log('🟢 [JudgePage] Applying INIT_ROUTE:', msg);
+      setInitiated(true);
+      setMaxScore(msg.holdsCount || 0);
+      setCurrentClimber(
+        Array.isArray(msg.competitors) && msg.competitors.length
+          ? msg.competitors[0].nume
+          : ''
+      );
+      setTimerState("idle");
+      setUsedHalfHold(false);
+      setHoldCount(0);
+      applyTimerPresetSnapshot(msg);
+    }
+    if (msg.type === 'START_TIMER') {
+      console.log('🟢 [JudgePage] Applying START_TIMER');
+      setTimerState("running");
+    }
+    if (msg.type === 'STOP_TIMER') {
+      console.log('🟢 [JudgePage] Applying STOP_TIMER');
+      setTimerState("paused");
+    }
+    if (msg.type === 'RESUME_TIMER') {
+      console.log('🟢 [JudgePage] Applying RESUME_TIMER');
+      setTimerState("running");
+    }
+    if (msg.type === 'PROGRESS_UPDATE') {
+      console.log('🟢 [JudgePage] Applying PROGRESS_UPDATE:', msg);
+      // Prefer authoritative count if provided; otherwise apply delta
+      if (typeof msg.holdCount === 'number') {
+        setHoldCount(msg.holdCount);
+      } else {
+        const delta = typeof msg.delta === 'number' ? msg.delta : 1;
+        setHoldCount(prev => {
+          if (delta === 1) return Math.floor(prev) + 1;
+          return Number((prev + delta).toFixed(1));
+        });
+        if (delta === 0.1) setUsedHalfHold(true);
+        else setUsedHalfHold(false);
+      }
+    }
+    if (msg.type === 'SUBMIT_SCORE') {
+      console.log('🟢 [JudgePage] Applying SUBMIT_SCORE');
+      setTimerState("idle");
+      setUsedHalfHold(false);
+      setHoldCount(0);
+      clearRegisteredTime();
+    }
+    if (msg.type === 'REGISTER_TIME') {
+      console.log('🟢 [JudgePage] Applying REGISTER_TIME:', msg.registeredTime);
+      if (typeof msg.registeredTime === "number") {
+        setRegisteredTime(msg.registeredTime);
+        try {
+          localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
+        } catch (err) {
+          console.error("Failed to persist registered time from WS", err);
+        }
+      }
+    }
+    if (msg.type === 'STATE_SNAPSHOT') {
+      console.log('🟢 [JudgePage] Applying STATE_SNAPSHOT:', msg);
+      // Always apply snapshot so Judge reflects backend immediately
+      setInitiated(!!msg.initiated);
+      setMaxScore(msg.holdsCount || 0);
+      setCurrentClimber(msg.currentClimber || '');
+      if (msg.sessionId) setSessionId(idx, msg.sessionId);
+      setTimerState(msg.timerState || (msg.started ? "running" : "idle"));
+      setHoldCount(msg.holdCount || 0);
+      applyTimerPresetSnapshot(msg);
+      if (typeof msg.registeredTime === "number") {
+        setRegisteredTime(msg.registeredTime);
+        try {
+          localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
+        } catch (err) {
+          console.error("Failed to persist registered time from snapshot", err);
+        }
+      }
+      if (typeof msg.remaining === "number") {
+        setTimerSeconds(msg.remaining);
+        localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
+      }
+      if (typeof msg.timeCriterionEnabled === "boolean") {
+        setTimeCriterionEnabled(msg.timeCriterionEnabled);
+        localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
+      }
+    }
+    if (msg.type === 'ACTIVE_CLIMBER') {
+      console.log('🟢 [JudgePage] Applying ACTIVE_CLIMBER:', msg.competitor);
+      setCurrentClimber(msg.competitor || '');
+    }
+  }, [idx, applyTimerPresetSnapshot, clearRegisteredTime]);
+
+  // Initialize WebSocket hook at top level with memoized URL
+  console.log('🟡 [JudgePage] About to call useWebSocketWithHeartbeat with wsUrl:', WS_URL);
+  const { ws, connected } = useWebSocketWithHeartbeat(WS_URL, (m) => {
+    console.log('🟢 [JudgePage] WS message received:', m.type);
+    handleWsMessage(m);
+  });
+  console.log('🟡 [JudgePage] Hook returned, connected:', connected, 'ws:', ws ? 'exists' : 'null');
+  // Track WS open/close to update banner and trigger resync
+  useEffect(() => {
+    if (!ws) return;
+    const handleOpen = () => {
+      console.log('📗 [JudgePage ws effect] handleOpen called, syncing state from server');
+      setWsStatus("open");
+      setWsError("");
+      // On reconnect, force a state sync
+      fetch(`${API_BASE}/api/state/${idx}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(st => {
+          if (!st) return;
+          if (st.sessionId) setSessionId(idx, st.sessionId);
+          setInitiated(st.initiated);
+          setMaxScore(st.holdsCount);
+          setCurrentClimber(st.currentClimber);
+          setTimerState(st.timerState || (st.started ? "running" : "idle"));
+          setHoldCount(st.holdCount);
+          applyTimerPresetSnapshot(st);
+          if (typeof st.registeredTime === "number") setRegisteredTime(st.registeredTime);
+          if (typeof st.remaining === "number") setTimerSeconds(st.remaining);
+          if (typeof st.timeCriterionEnabled === "boolean") setTimeCriterionEnabled(st.timeCriterionEnabled);
+        })
+        .catch(() => {});
+    };
+    const handleClose = () => setWsStatus("closed");
+    
+    // If socket is already open, call handleOpen immediately (in case open event already fired)
+    if (ws.readyState === WebSocket.OPEN) {
+      console.log('📗 [JudgePage ws effect] Socket already OPEN (readyState:', ws.readyState, '), calling handleOpen immediately');
+      handleOpen();
+    }
+    
+    ws.addEventListener("open", handleOpen);
+    ws.addEventListener("close", handleClose);
+    ws.addEventListener("error", handleClose);
+    return () => {
+      ws.removeEventListener("open", handleOpen);
+      ws.removeEventListener("close", handleClose);
+      ws.removeEventListener("error", handleClose);
+    };
+  }, [ws, API_BASE, idx, applyTimerPresetSnapshot]);
+
+  const formatTime = (sec) => {
+    if (typeof sec !== "number" || Number.isNaN(sec)) return "—";
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
 
   // ==================== FIX 2: WATCH BOXVERSION CHANGES ====================
   // If reset happens (boxVersion changes) in ControlPanel, refresh Judge state
@@ -110,163 +285,29 @@ const JudgePage = () => {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [idx, API_BASE]);
 
-useEffect(() => {
-    // Fetch initial state snapshot (manual reconnection)
+  // Fetch initial state snapshot on mount
+  useEffect(() => {
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/api/state/${idx}`);
         if (res.ok) {
           const st = await res.json();
-          // ==================== FIX 3: PERSIST SESSION ID ====================
-          // Store sessionId from server response to include in future commands
-          if (st.sessionId) {
-            setSessionId(idx, st.sessionId);
-          }
+          if (st.sessionId) setSessionId(idx, st.sessionId);
           setInitiated(st.initiated);
           setMaxScore(st.holdsCount);
           setCurrentClimber(st.currentClimber);
           setTimerState(st.timerState || (st.started ? "running" : "idle"));
           setHoldCount(st.holdCount);
           applyTimerPresetSnapshot(st);
-          if (typeof st.registeredTime === "number") {
-            setRegisteredTime(st.registeredTime);
-            try {
-              localStorage.setItem(`registeredTime-${idx}`, st.registeredTime.toString());
-            } catch (err) {
-              console.error("Failed to persist registered time locally", err);
-            }
-          }
-          if (typeof st.remaining === "number") {
-            setTimerSeconds(st.remaining);
-            localStorage.setItem(`timer-${idx}`, st.remaining.toString());
-          }
-          if (typeof st.timeCriterionEnabled === "boolean") {
-            setTimeCriterionEnabled(st.timeCriterionEnabled);
-            localStorage.setItem("timeCriterionEnabled", st.timeCriterionEnabled ? "on" : "off");
-          }
+          if (typeof st.registeredTime === "number") setRegisteredTime(st.registeredTime);
+          if (typeof st.remaining === "number") setTimerSeconds(st.remaining);
+          if (typeof st.timeCriterionEnabled === "boolean") setTimeCriterionEnabled(st.timeCriterionEnabled);
         }
       } catch (e) {
         console.error("Error fetching initial state:", e);
       }
     })();
-    // Build WebSocket URL based on how the page was loaded
-    const WS_URL = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}`;
-    const ws = new WebSocket(WS_URL);
-    setWsStatus("connecting");
-    setWsError("");
-    ws.onopen = () => {
-      setWsStatus("open");
-    };
-    // No ws.send REQUEST_STATE on open anymore
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === 'TIME_CRITERION') {
-        setTimeCriterionEnabled(!!msg.timeCriterionEnabled);
-        localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
-        return;
-      }
-      if (msg.type === 'TIMER_SYNC') {
-        if (+msg.boxId !== idx) return;
-        if (typeof msg.remaining === "number") {
-          setTimerSeconds(msg.remaining);
-          localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
-        }
-        return;
-      }
-      if (+msg.boxId !== idx) return;
-       // --- nou: reacționează la INIT_ROUTE -----------------
-      if (msg.type === 'INIT_ROUTE') {
-        setInitiated(true);                     // activează butoanele
-        setMaxScore(msg.holdsCount || 0);      // scor maxim pentru ruta curentă
-        setCurrentClimber(
-          Array.isArray(msg.competitors) && msg.competitors.length
-            ? msg.competitors[0].nume
-            : ''
-        );
-        setTimerState("idle");
-        setUsedHalfHold(false);
-        setHoldCount(0);
-        applyTimerPresetSnapshot(msg);
-      }
-      if (msg.type === 'START_TIMER') {
-        setTimerState("running");
-      }
-      if (msg.type === 'STOP_TIMER') {
-        setTimerState("paused");
-      }
-      if (msg.type === 'RESUME_TIMER') {
-        setTimerState("running");
-      }
-      if (msg.type === 'PROGRESS_UPDATE') {
-        const delta = typeof msg.delta === 'number' ? msg.delta : 1;
-        setHoldCount(prev => {
-          if (delta === 1) return Math.floor(prev) + 1;
-          return Number((prev + delta).toFixed(1));
-        });
-        if (delta === 0.1) setUsedHalfHold(true);
-        else setUsedHalfHold(false);
-      }
-      if (msg.type === 'SUBMIT_SCORE') {
-        // reset state identic ControlPanel
-        setTimerState("idle");
-        setUsedHalfHold(false);
-        setHoldCount(0);
-        clearRegisteredTime();
-      }
-      if (msg.type === 'REGISTER_TIME') {
-        if (typeof msg.registeredTime === "number") {
-          setRegisteredTime(msg.registeredTime);
-          try {
-            localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
-          } catch (err) {
-            console.error("Failed to persist registered time from WS", err);
-          }
-        }
-      }
-      // Handle state snapshot from ControlPanel
-      if (msg.type === 'STATE_SNAPSHOT') {
-        setInitiated(msg.initiated);
-        setMaxScore(msg.holdsCount);
-        setCurrentClimber(msg.currentClimber || '');
-        setTimerState(msg.timerState || (msg.started ? "running" : "idle"));
-        setHoldCount(msg.holdCount || 0);
-        applyTimerPresetSnapshot(msg);
-        if (typeof msg.registeredTime === "number") {
-          setRegisteredTime(msg.registeredTime);
-          try {
-            localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
-          } catch (err) {
-            console.error("Failed to persist registered time from snapshot", err);
-          }
-        }
-        if (typeof msg.remaining === "number") {
-          setTimerSeconds(msg.remaining);
-          localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
-        }
-        if (typeof msg.timeCriterionEnabled === "boolean") {
-          setTimeCriterionEnabled(msg.timeCriterionEnabled);
-          localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
-        }
-      }
-      // Handle ACTIVE_CLIMBER broadcast
-      if (msg.type === 'ACTIVE_CLIMBER') {
-        setCurrentClimber(msg.competitor || '');
-      }
-    };
-    ws.onerror = (ev) => {
-      setWsStatus("closed");
-      try {
-        setWsError(typeof ev?.message === "string" ? ev.message : "WebSocket error");
-      } catch {
-        setWsError("WebSocket error");
-      }
-    };
-    ws.onclose = () => {
-      setWsStatus("closed");
-    };
-    wsRef.current = ws;
-    return () => ws.close();
-  }, [idx, API_BASE, WS_PROTOCOL, clearRegisteredTime]);
+  }, [idx, API_BASE, applyTimerPresetSnapshot]);
 
   useEffect(() => {
     const syncFromStorage = () => {
@@ -301,6 +342,17 @@ useEffect(() => {
       clearRegisteredTime();
     }
   }, [timeCriterionEnabled, clearRegisteredTime]);
+
+  // Debounce WS banner to avoid flicker on quick reconnects
+  useEffect(() => {
+    if (wsStatus === "open") {
+      setShowWsBanner(false);
+      setWsError("");
+      return;
+    }
+    const t = setTimeout(() => setShowWsBanner(true), 800);
+    return () => clearTimeout(t);
+  }, [wsStatus]);
 
   const pullLatestState = async () => {
     let snapshot = {};
@@ -402,9 +454,25 @@ useEffect(() => {
   const isRunning = timerState === "running";
   const isPaused = timerState === "paused";
 
+  // Debounce banner: show only if non-open state persists > 1s
+  useEffect(() => {
+    if (wsStatus === "open") {
+      setShowWsBanner(false);
+      setWsError("");
+      return;
+    }
+    const t = setTimeout(() => {
+      setShowWsBanner(true);
+      if (!wsError) {
+        setWsError("WebSocket reconnecting...");
+      }
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [wsStatus, wsError]);
+
   return (
     <div className="p-20 flex flex-col gap-2">
-      {wsStatus !== "open" && (
+      {showWsBanner && wsStatus !== "open" && (
         <div className="mb-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
           WS: {wsStatus}. {wsError ? `(${wsError})` : "Check host IP and that port 8000 is reachable."}
         </div>
@@ -527,4 +595,5 @@ useEffect(() => {
   );
 };
 
+console.log('🟡 [JudgePage] File loaded, export:', typeof JudgePage);
 export default JudgePage;

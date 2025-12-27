@@ -2,7 +2,7 @@ import QRCode from 'react-qr-code';
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import ModalUpload from "./ModalUpload";
 import ModalTimer from "./ModalTimer";
-import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime, getSessionId, setSessionId } from '../utilis/contestActions';
+import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime, getSessionId, setSessionId, resetBox } from '../utilis/contestActions';
 import ModalModifyScore from "./ModalModifyScore";
 import getWinners from '../utilis/getWinners';
 import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
@@ -259,9 +259,21 @@ const ControlPanel = () => {
               if (msg.sessionId) {
                 setSessionId(idx, msg.sessionId);
               }
-              setTimerStates(prev => ({ ...prev, [idx]: msg.timerState || (msg.started ? "running" : "idle") }));
+              // Ignore stale snapshot values for non‑initiated boxes
+              setTimerStates(prev => ({
+                ...prev,
+                [idx]: (listboxesRef.current[idx]?.initiated ? (msg.timerState || (msg.started ? "running" : "idle")) : "idle")
+              }));
               if (typeof msg.holdCount === "number") {
-                setHoldClicks(prev => ({ ...prev, [idx]: msg.holdCount }));
+                setHoldClicks(prev => ({
+                  ...prev,
+                  [idx]: listboxesRef.current[idx]?.initiated ? msg.holdCount : 0
+                }));
+              } else {
+                // Ensure zero for non‑initiated boxes even if holdCount missing
+                if (!listboxesRef.current[idx]?.initiated) {
+                  setHoldClicks(prev => ({ ...prev, [idx]: 0 }));
+                }
               }
               if (typeof msg.currentClimber === "string") {
                 setCurrentClimbers(prev => ({ ...prev, [idx]: msg.currentClimber }));
@@ -697,7 +709,13 @@ const ControlPanel = () => {
     setShowModal(false);
   };
 
-  const handleDelete = (index) => {
+  const handleDelete = async (index) => {
+    // Reset backend state to avoid stale snapshots
+    try {
+      await resetBox(index);
+    } catch (err) {
+      console.error(`RESET_BOX failed for box ${index}`, err);
+    }
     // ==================== FIX 2: EXPLICIT WS CLOSE ====================
     // Close WebSocket BEFORE deleting from state to prevent ghost WS
     const ws = wsRefs.current[index];
@@ -799,7 +817,7 @@ const ControlPanel = () => {
 
 
   // Reset listbox to its initial state
-  const handleReset = (index) => {
+  const handleReset = async (index) => {
     const boxToReset = listboxes[index];
     
     // ==================== FIX 3: GUARD HOLDSCOUNT ARRAY ====================
@@ -807,6 +825,12 @@ const ControlPanel = () => {
     if (!boxToReset || !Array.isArray(boxToReset.holdsCounts) || boxToReset.holdsCounts.length === 0) {
       console.error(`Cannot reset box ${index}: missing or empty holdsCounts array`, boxToReset);
       return;
+    }
+    // Reset backend state and regenerate sessionId
+    try {
+      await resetBox(index);
+    } catch (err) {
+      console.error(`RESET_BOX failed for box ${index}`, err);
     }
     
     setListboxes(prev =>

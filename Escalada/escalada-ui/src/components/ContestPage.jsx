@@ -474,7 +474,14 @@ const ContestPage = () => {
     useEffect(() => {
       const onStorage = (e) => {
         if (!e.key || !e.newValue) return;
-        const msg = JSON.parse(e.newValue);
+        let msg;
+        try {
+          msg = JSON.parse(e.newValue);
+        } catch {
+          // Not a JSON payload we care about (e.g. simple string values)
+          return;
+        }
+        if (!msg || typeof msg !== "object") return;
         if (msg.type === 'START_TIMER' && +msg.boxId === +boxId) {
           window.postMessage({ type: 'START_TIMER', boxId: msg.boxId }, '*');
         }

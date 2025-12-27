@@ -69,7 +69,7 @@ class ValidatedCmd(BaseModel):
             'PROGRESS_UPDATE', 'REQUEST_ACTIVE_COMPETITOR',
             'SUBMIT_SCORE', 'INIT_ROUTE', 'REQUEST_STATE',
             'SET_TIME_CRITERION', 'REGISTER_TIME', 'TIMER_SYNC',
-            'ACTIVE_CLIMBER'
+            'ACTIVE_CLIMBER', 'RESET_BOX'
         }
         if v not in allowed_types:
             raise ValueError(f'type must be one of {allowed_types}, got {v}')
@@ -223,6 +223,9 @@ class ValidatedCmd(BaseModel):
         elif cmd_type == 'REGISTER_TIME':
             if self.registeredTime is None:
                 raise ValueError('REGISTER_TIME requires registeredTime')
+        elif cmd_type == 'RESET_BOX':
+            # No additional fields required beyond boxId/type; validation passes
+            pass
         
         return self
     

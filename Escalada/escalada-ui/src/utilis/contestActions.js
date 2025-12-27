@@ -130,4 +130,13 @@ export async function requestState(boxId) {
   });
 }
 
+// RESET_BOX: clear backend state and regenerate sessionId
+export async function resetBox(boxId) {
+  await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ boxId, type: 'RESET_BOX', sessionId: getSessionId(boxId) })
+  });
+}
+
 export { getSessionId, setSessionId };
