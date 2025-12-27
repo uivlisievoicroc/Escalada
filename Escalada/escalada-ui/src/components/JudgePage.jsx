@@ -36,6 +36,10 @@ const JudgePage = () => {
     return Number.isNaN(parsed) ? null : parsed;
   });
   const [serverTimerPresetSec, setServerTimerPresetSec] = useState(null);
+  
+  // Ref to track snapshot fallback timeout
+  const snapshotTimeoutRef = useRef(null);
+  
   const getTimerPreset = () => {
     const specific = localStorage.getItem(`climbingTime-${idx}`);
     const global = localStorage.getItem("climbingTime");
@@ -167,6 +171,14 @@ const JudgePage = () => {
     }
     if (msg.type === 'STATE_SNAPSHOT') {
       console.log('🟢 [JudgePage] Applying STATE_SNAPSHOT:', msg);
+      
+      // Clear fallback timeout since snapshot arrived
+      if (snapshotTimeoutRef.current) {
+        clearTimeout(snapshotTimeoutRef.current);
+        snapshotTimeoutRef.current = null;
+        console.log('📗 [JudgePage] Cleared fallback timeout (STATE_SNAPSHOT received)');
+      }
+      
       // Always apply snapshot so Judge reflects backend immediately
       setInitiated(!!msg.initiated);
       setMaxScore(msg.holdsCount || 0);
@@ -212,23 +224,39 @@ const JudgePage = () => {
       console.log('📗 [JudgePage ws effect] handleOpen called, syncing state from server');
       setWsStatus("open");
       setWsError("");
-      // On reconnect, force a state sync
-      fetch(`${API_BASE}/api/state/${idx}`)
-        .then(res => res.ok ? res.json() : null)
-        .then(st => {
-          if (!st) return;
-          if (st.sessionId) setSessionId(idx, st.sessionId);
-          setInitiated(st.initiated);
-          setMaxScore(st.holdsCount);
-          setCurrentClimber(st.currentClimber);
-          setTimerState(st.timerState || (st.started ? "running" : "idle"));
-          setHoldCount(st.holdCount);
-          applyTimerPresetSnapshot(st);
-          if (typeof st.registeredTime === "number") setRegisteredTime(st.registeredTime);
-          if (typeof st.remaining === "number") setTimerSeconds(st.remaining);
-          if (typeof st.timeCriterionEnabled === "boolean") setTimeCriterionEnabled(st.timeCriterionEnabled);
-        })
-        .catch(() => {});
+      
+      // NEW: Force explicit STATE_SNAPSHOT request via WebSocket
+      if (ws.readyState === WebSocket.OPEN) {
+        console.log('📗 [JudgePage] Requesting STATE_SNAPSHOT via WebSocket');
+        try {
+          ws.send(JSON.stringify({ type: 'REQUEST_STATE', boxId: idx }));
+        } catch (err) {
+          console.error('📗 [JudgePage] Failed to send REQUEST_STATE:', err);
+        }
+      }
+      
+      // Fallback: If no STATE_SNAPSHOT arrives in 2s, fetch via HTTP
+      snapshotTimeoutRef.current = setTimeout(() => {
+        console.warn('📗 [JudgePage] No STATE_SNAPSHOT received in 2s, fetching via HTTP');
+        
+        fetch(`${API_BASE}/api/state/${idx}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(st => {
+            if (!st) return;
+            console.log('📗 [JudgePage] Applied fallback HTTP state:', st);
+            if (st.sessionId) setSessionId(idx, st.sessionId);
+            setInitiated(!!st.initiated);
+            setMaxScore(st.holdsCount || 0);
+            setCurrentClimber(st.currentClimber || '');
+            setTimerState(st.timerState || (st.started ? "running" : "idle"));
+            setHoldCount(st.holdCount || 0);
+            applyTimerPresetSnapshot(st);
+            if (typeof st.registeredTime === "number") setRegisteredTime(st.registeredTime);
+            if (typeof st.remaining === "number") setTimerSeconds(st.remaining);
+            if (typeof st.timeCriterionEnabled === "boolean") setTimeCriterionEnabled(st.timeCriterionEnabled);
+          })
+          .catch(err => console.error('📗 [JudgePage] Failed to fetch fallback state:', err));
+      }, 2000);
     };
     const handleClose = () => setWsStatus("closed");
     

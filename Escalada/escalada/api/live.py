@@ -116,10 +116,24 @@ async def cmd(cmd: Cmd):
     print(f"Backend received cmd: {cmd}")
 
     # ==================== ATOMIC STATE INITIALIZATION ====================
-    # Use global init_lock to prevent race conditions when creating state_map/state_locks
+    # CRITICAL FIX: Keep lock acquired across entire initialization to prevent race conditions
+    # Get or create the box-specific lock under global init_lock protection
     async with init_lock:
         if cmd.boxId not in state_locks:
             state_locks[cmd.boxId] = asyncio.Lock()
+        lock = state_locks[cmd.boxId]
+    
+    # Toggle global time criterion without touching per‑box state
+    if cmd.type == "SET_TIME_CRITERION":
+        global time_criterion_enabled
+        async with time_criterion_lock:
+            time_criterion_enabled = bool(cmd.timeCriterionEnabled)
+        await _broadcast_time_criterion()
+        return {"status": "ok"}
+    
+    # Lock state access for this boxId
+    async with lock:
+        # Initialize state INSIDE the lock (no window for race condition)
         if cmd.boxId not in state_map:
             import uuid
             state_map[cmd.boxId] = {
@@ -138,28 +152,26 @@ async def cmd(cmd: Cmd):
                 "timerPresetSec": None,
                 "sessionId": str(uuid.uuid4()),  # Generated at creation, not at INIT_ROUTE
             }
-    
-    lock = state_locks[cmd.boxId]
-    
-    # Toggle global time criterion without touching per‑box state
-    if cmd.type == "SET_TIME_CRITERION":
-        global time_criterion_enabled
-        async with time_criterion_lock:
-            time_criterion_enabled = bool(cmd.timeCriterionEnabled)
-        await _broadcast_time_criterion()
-        return {"status": "ok"}
-    
-    # Lock state access for this boxId
-    async with lock:
+        
         # Update server-side state snapshot
         sm = state_map[cmd.boxId]
         
         # ==================== SESSION VALIDATION ====================
-        # If command has sessionId, verify it matches current session
-        if cmd.sessionId is not None:
+        # CRITICAL: Enforce sessionId for all commands except INIT_ROUTE
+        if cmd.type != "INIT_ROUTE":
+            if not cmd.sessionId:
+                logger.warning(f'Command {cmd.type} for box {cmd.boxId} missing sessionId')
+                raise HTTPException(
+                    status_code=400,
+                    detail="sessionId required for all commands except INIT_ROUTE"
+                )
+            
             current_session = sm.get("sessionId")
-            if current_session is not None and cmd.sessionId != current_session:
-                logger.warning(f'Stale session for box {cmd.boxId}: got {cmd.sessionId}, expected {current_session}')
+            if current_session and cmd.sessionId != current_session:
+                logger.warning(
+                    f'Stale sessionId for box {cmd.boxId}: '
+                    f'received {cmd.sessionId}, expected {current_session}'
+                )
                 return {"status": "ignored", "reason": "stale_session"}
         
         if cmd.type == "INIT_ROUTE":
@@ -366,9 +378,20 @@ async def websocket_endpoint(ws: WebSocket, box_id: int):
             # Handle PONG response
             try:
                 msg = json.loads(data) if isinstance(data, str) else data
-                if isinstance(msg, dict) and msg.get("type") == "PONG":
+                if isinstance(msg, dict):
+                    msg_type = msg.get("type")
+                    
                     # Acknowledge PONG
-                    continue
+                    if msg_type == "PONG":
+                        continue
+                    
+                    # NEW: Handle REQUEST_STATE command
+                    if msg_type == "REQUEST_STATE":
+                        requested_box_id = msg.get("boxId", box_id)
+                        logger.info(f"WebSocket REQUEST_STATE for box {requested_box_id}")
+                        await _send_state_snapshot(requested_box_id, targets={ws})
+                        continue
+                        
             except json.JSONDecodeError:
                 logger.debug(f"Invalid JSON from WS box {box_id}")
                 continue

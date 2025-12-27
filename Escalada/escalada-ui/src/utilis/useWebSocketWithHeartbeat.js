@@ -18,9 +18,15 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
 
   useEffect(() => {
     const currentGen = ++generationRef.current;
+    let cleanupCalled = false; // Track cleanup state to prevent StrictMode churn
     let reconnectTimeoutId = null;
 
     const connect = () => {
+      // Guard against StrictMode re-entry
+      if (cleanupCalled) {
+        logger.debug('[WebSocket] Cleanup already called, skipping connect');
+        return;
+      }
       if (currentGen !== generationRef.current) return;
 
       // Avoid duplicate attempts while handshake is in progress
@@ -45,6 +51,14 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
 
         ws.onopen = () => {
           isConnectingRef.current = false;
+          
+          // Check cleanup state BEFORE processing open event (StrictMode protection)
+          if (cleanupCalled) {
+            console.debug('[Hook onopen] Cleanup called before open (StrictMode), closing');
+            ws.close();
+            return;
+          }
+          
           console.log('🟢 [Hook onopen] TRIGGERED for', url, 'readyState:', ws.readyState, 'timestamp:', new Date().toISOString());
           logger.log(`[WebSocket] Connected to ${url}`);
           console.log('🟢 [Hook onopen] Setting connected=true and wsInstance');
@@ -87,6 +101,13 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
         ws.onclose = () => {
           isConnectingRef.current = false;
           console.log('🔌 [Hook onclose] CLOSED for', url, 'timestamp:', new Date().toISOString());
+          
+          // Check cleanup state before reconnecting
+          if (cleanupCalled) {
+            console.debug('[Hook onclose] Component unmounted or cleanup called, not reconnecting');
+            return;
+          }
+          
           logger.log(`[WebSocket] Disconnected from ${url}`);
           setConnected(false);
           setWsInstance(null);
@@ -115,6 +136,8 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
     connect();
 
     return () => {
+      cleanupCalled = true; // Mark cleanup as executed FIRST to prevent race conditions
+      
       // Invalidate this generation so late events are ignored
       if (currentGen === generationRef.current) {
         generationRef.current += 1;
