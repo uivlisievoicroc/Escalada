@@ -3,6 +3,8 @@ import { ResizableBox } from 'react-resizable';
 import 'react-resizable/css/styles.css';
 import { useParams } from 'react-router-dom';
 import { debugLog, debugError } from '../utilis/debug';
+import { safeSetItem, safeGetItem, safeRemoveItem } from '../utilis/storage';
+import { sanitizeBoxName, sanitizeCompetitorName } from '../utilis/sanitize';
 // (WebSocket logic moved into component)
 
 const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
@@ -218,7 +220,7 @@ const ContestPage = () => {
         window.postMessage({ type: 'PROGRESS_UPDATE', boxId: msg.boxId, delta: msg.delta }, '*');
       }
       if (msg.type === 'REQUEST_ACTIVE_COMPETITOR') {
-        localStorage.setItem(
+        safeSetItem(
           'climb_response',
           JSON.stringify({
             type: 'RESPONSE_ACTIVE_COMPETITOR',
@@ -331,7 +333,7 @@ const ContestPage = () => {
   
   // Sincronizează competitorul curent în localStorage
   useEffect(() => {
-    localStorage.setItem(`currentClimber-${boxId}`, climbing);
+    safeSetItem(`currentClimber-${boxId}`, climbing);
   }, [climbing, boxId]);
 
   const [remaining, setRemaining] = useState([]);
@@ -378,7 +380,7 @@ const ContestPage = () => {
       if (timerChannelRef.current) {
         timerChannelRef.current.postMessage({ boxId: Number(boxId), remaining });
       } else {
-        localStorage.setItem(
+        safeSetItem(
           `timer-sync-${boxId}`,
           JSON.stringify({ boxId: Number(boxId), remaining, ts: Date.now() })
         );
@@ -413,8 +415,8 @@ const ContestPage = () => {
     setEndTimeMs(nextEnd);
     endTimeRef.current = nextEnd;
     setRunning(true);
-    localStorage.setItem(`tick-owner-${boxId}`, window.name || "tick-owner");
-    localStorage.setItem(`timer-${boxId}`, duration.toString());
+    safeSetItem(`tick-owner-${boxId}`, window.name || "tick-owner");
+    safeSetItem(`timer-${boxId}`, duration.toString());
     broadcastRemaining(duration);
   }, [broadcastRemaining, boxId, getTimerPreset]);
 
@@ -431,7 +433,7 @@ const ContestPage = () => {
     endTimeRef.current = null;
     setTimerSec(remaining);
     timerSecRef.current = remaining;
-    localStorage.setItem(`timer-${boxId}`, remaining.toString());
+    safeSetItem(`timer-${boxId}`, remaining.toString());
     broadcastRemaining(remaining);
   }, [boxId, broadcastRemaining]);
 
@@ -444,7 +446,7 @@ const ContestPage = () => {
     setEndTimeMs(nextEnd);
     endTimeRef.current = nextEnd;
     setRunning(true);
-    localStorage.setItem(`tick-owner-${boxId}`, window.name || "tick-owner");
+    safeSetItem(`tick-owner-${boxId}`, window.name || "tick-owner");
   }, [boxId]);
 
     // ===== T1 START_TIMER =====
@@ -510,7 +512,7 @@ const ContestPage = () => {
           window.postMessage({ type: 'PROGRESS_UPDATE', boxId: msg.boxId, delta: msg.delta }, '*');
         }
         if (msg.type === 'REQUEST_ACTIVE_COMPETITOR' && +msg.boxId === +boxId) {
-          localStorage.setItem(
+          safeSetItem(
             'climb_response',
             JSON.stringify({
               type: 'RESPONSE_ACTIVE_COMPETITOR',
@@ -534,7 +536,7 @@ const ContestPage = () => {
         setTimerSec(next);
         timerSecRef.current = next;
         // opțional, sincronizează și în localStorage
-        localStorage.setItem(`timer-${boxId}`, next.toString());
+        safeSetItem(`timer-${boxId}`, next.toString());
         if (next > 0) {
           const owner = localStorage.getItem(`tick-owner-${boxId}`);
           if (owner === (window.name || "tick-owner")) {
@@ -580,7 +582,7 @@ const ContestPage = () => {
               parsed.type === 'REQUEST_ACTIVE_COMPETITOR' &&
               +parsed.boxId === +boxId
             ) {
-              localStorage.setItem(
+              safeSetItem(
                 'climb_response',
                 JSON.stringify({
                   type: 'RESPONSE_ACTIVE_COMPETITOR',
@@ -631,8 +633,8 @@ const ContestPage = () => {
           })();
           setRankingTimes(updatedTimes);
           try {
-            localStorage.setItem(`ranking-${boxId}`, JSON.stringify(updatedRanking));
-            localStorage.setItem(`rankingTimes-${boxId}`, JSON.stringify(updatedTimes));
+            safeSetItem(`ranking-${boxId}`, JSON.stringify(updatedRanking));
+            safeSetItem(`rankingTimes-${boxId}`, JSON.stringify(updatedTimes));
           } catch (err) {
             debugError("Failed to persist rankings", err);
           }
@@ -647,7 +649,7 @@ const ContestPage = () => {
               const idx = boxBefore.concurenti.findIndex(c => c.nume === competitorName);
               if (idx !== -1) {
                 boxBefore.concurenti[idx].marked = true;
-                localStorage.setItem("listboxes", JSON.stringify(before));
+                safeSetItem("listboxes", JSON.stringify(before));
               }
             }
           } catch (err) {
@@ -677,7 +679,7 @@ const ContestPage = () => {
           setRunning(false);
           setEndTimeMs(null);
           endTimeRef.current = null;
-          localStorage.setItem(`timer-${boxId}`, resetSec.toString());
+          safeSetItem(`timer-${boxId}`, resetSec.toString());
           broadcastRemaining(resetSec);
 
             // 5. Detect end of contest
@@ -706,7 +708,7 @@ const ContestPage = () => {
                 name: c.nume,
                 color: ['#ffd700', '#c0c0c0', '#cd7f32'][i] // aur, argint, bronz
               }));
-              localStorage.setItem(`podium-${boxId}`, JSON.stringify(podium));
+              safeSetItem(`podium-${boxId}`, JSON.stringify(podium));
 
               setTimeout(() => {
                 // Build club mapping: { nume: club }
@@ -764,7 +766,7 @@ const ContestPage = () => {
     <div className="h-screen grid grid-rows-[auto_1fr] bg-gray-50">
       {/* Header */}
       <header className="row-span-1 bg-white shadow-sm flex items-center justify-center">
-        <h1 className="text-4xl font-extrabold">{category}</h1>
+        <h1 className="text-4xl font-extrabold">{sanitizeBoxName(category)}</h1>
       </header>
 
       
@@ -885,7 +887,7 @@ const ContestPage = () => {
                   className={`grid gap-2 divide-x divide-gray-200 py-2 text-2xl ${rankClass(row.rank)}`}
                   style={{ gridTemplateColumns: `1fr repeat(${routeIdx}, 1fr) 80px` }}
                 >
-                  <span className="px-2 text-4xl font-semibold">{row.rank}. {row.nume}</span>
+                  <span className="px-2 text-4xl font-semibold">{row.rank}. {sanitizeCompetitorName(row.nume)}</span>
                   {Array.from({ length: routeIdx }).map((_, i) => {
                     const scoreVal = row.raw[i];
                     const timeVal = row.rawTimes[i];

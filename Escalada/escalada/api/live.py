@@ -62,6 +62,9 @@ class Cmd(BaseModel):
     
     # Session token for state bleed prevention
     sessionId: str | None = None
+    
+    # Box version for stale command detection (TASK 2.6)
+    boxVersion: int | None = None
 
 @router.post("/cmd")
 async def cmd(cmd: Cmd):
@@ -151,12 +154,13 @@ async def cmd(cmd: Cmd):
                 "timerPreset": None,
                 "timerPresetSec": None,
                 "sessionId": str(uuid.uuid4()),  # Generated at creation, not at INIT_ROUTE
+                "boxVersion": 0,  # Incremented on INIT_ROUTE to prevent stale commands
             }
         
         # Update server-side state snapshot
         sm = state_map[cmd.boxId]
         
-        # ==================== SESSION VALIDATION ====================
+        # ==================== SESSION & VERSION VALIDATION ====================
         # CRITICAL: Enforce sessionId for all commands except INIT_ROUTE
         if cmd.type != "INIT_ROUTE":
             if not cmd.sessionId:
@@ -174,10 +178,22 @@ async def cmd(cmd: Cmd):
                 )
                 return {"status": "ignored", "reason": "stale_session"}
         
+        # TASK 2.6: Validate boxVersion if present (prevents stale commands from old browser tabs)
+        if cmd.boxVersion is not None:
+            current_version = sm.get("boxVersion", 0)
+            if cmd.boxVersion < current_version:
+                logger.warning(
+                    f'Stale command for box {cmd.boxId}: '
+                    f'version {cmd.boxVersion} < {current_version}'
+                )
+                return {"status": "ignored", "reason": "stale_version"}
+        
         if cmd.type == "INIT_ROUTE":
             # INIT_ROUTE: update competition details and mark as initiated
             # sessionId already generated at state creation
             cmd.sessionId = sm["sessionId"]  # Use existing sessionId
+            # TASK 2.6: Increment boxVersion on INIT_ROUTE to invalidate old commands
+            sm["boxVersion"] = sm.get("boxVersion", 0) + 1
             sm["initiated"] = True
             sm["holdsCount"] = cmd.holdsCount or 0
             sm["routeIndex"] = cmd.routeIndex or 1

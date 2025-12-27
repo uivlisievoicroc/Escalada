@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { debugError } from './debug';
+import { safeSetItem, safeGetItem, safeRemoveItem } from './storage';
 
 /**
  * Custom hook for managing localStorage with error handling
@@ -28,18 +29,10 @@ export function useLocalStorage(key, initialValue) {
   // Return a wrapped version of useState's setter function that
   // persists the new value to localStorage
   const setValue = useCallback((value) => {
-    try {
-      const valueToStore = value instanceof Function ? value(storedValue) : value;
-      setStoredValue(valueToStore);
-      if (window.localStorage) {
-        window.localStorage.setItem(key, JSON.stringify(valueToStore));
-      }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        debugError(`localStorage quota exceeded for key "${key}"`, error);
-      } else {
-        debugError(`Error writing to localStorage key "${key}":`, error);
-      }
+    const valueToStore = value instanceof Function ? value(storedValue) : value;
+    setStoredValue(valueToStore);
+    if (window.localStorage) {
+      safeSetItem(key, JSON.stringify(valueToStore));
     }
   }, [key, storedValue]);
 

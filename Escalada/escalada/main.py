@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from escalada.routers.upload import router as upload_router
@@ -21,7 +22,22 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Escalada Control Panel API")
+
+# Define application lifespan (replaces deprecated @app.on_event)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events for the FastAPI application"""
+    # Startup logic
+    logger.info("🚀 Escalada API starting up...")
+    yield
+    # Shutdown logic
+    logger.info("🛑 Escalada API shutting down...")
+
+
+app = FastAPI(
+    title="Escalada Control Panel API",
+    lifespan=lifespan  # Use modern lifespan instead of on_event decorators
+)
 
 # Secure CORS configuration
 DEFAULT_ORIGINS = "http://localhost:5173,http://localhost:3000,http://192.168.100.205:5173"
@@ -69,7 +85,3 @@ app.include_router(upload_router, prefix="/api")
 app.include_router(save_ranking_router, prefix="/api")  
 app.include_router(live_router, prefix="/api")
 app.include_router(podium_router, prefix="/api")
-
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Application starting up")

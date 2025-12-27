@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, registerTime, getSessionId, setSessionId } from '../utilis/contestActions';
 import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
 import { debugLog, debugError } from '../utilis/debug';
+import { safeSetItem, safeGetItem, safeRemoveItem } from '../utilis/storage';
 import ModalScore from './ModalScore';
 import ModalModifyScore from './ModalModifyScore';
 
@@ -97,14 +98,14 @@ const JudgePage = () => {
     
     if (msg.type === 'TIME_CRITERION') {
       setTimeCriterionEnabled(!!msg.timeCriterionEnabled);
-      localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
+      safeSetItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
       return;
     }
     if (msg.type === 'TIMER_SYNC') {
       if (+msg.boxId !== idx) return;
       if (typeof msg.remaining === "number") {
         setTimerSeconds(msg.remaining);
-        localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
+        safeSetItem(`timer-${idx}`, msg.remaining.toString());
       }
       return;
     }
@@ -163,7 +164,7 @@ const JudgePage = () => {
       if (typeof msg.registeredTime === "number") {
         setRegisteredTime(msg.registeredTime);
         try {
-          localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
+          safeSetItem(`registeredTime-${idx}`, msg.registeredTime.toString());
         } catch (err) {
           debugError("Failed to persist registered time from WS", err);
         }
@@ -190,18 +191,18 @@ const JudgePage = () => {
       if (typeof msg.registeredTime === "number") {
         setRegisteredTime(msg.registeredTime);
         try {
-          localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
+          safeSetItem(`registeredTime-${idx}`, msg.registeredTime.toString());
         } catch (err) {
           debugError("Failed to persist registered time from snapshot", err);
         }
       }
       if (typeof msg.remaining === "number") {
         setTimerSeconds(msg.remaining);
-        localStorage.setItem(`timer-${idx}`, msg.remaining.toString());
+        safeSetItem(`timer-${idx}`, msg.remaining.toString());
       }
       if (typeof msg.timeCriterionEnabled === "boolean") {
         setTimeCriterionEnabled(msg.timeCriterionEnabled);
-        localStorage.setItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
+        safeSetItem("timeCriterionEnabled", msg.timeCriterionEnabled ? "on" : "off");
       }
     }
     if (msg.type === 'ACTIVE_CLIMBER') {
@@ -389,15 +390,15 @@ const JudgePage = () => {
         applyTimerPresetSnapshot(snapshot);
         if (typeof snapshot.remaining === "number") {
           setTimerSeconds(snapshot.remaining);
-          localStorage.setItem(`timer-${idx}`, snapshot.remaining.toString());
+          safeSetItem(`timer-${idx}`, snapshot.remaining.toString());
         }
         if (typeof snapshot.registeredTime === "number") {
           setRegisteredTime(snapshot.registeredTime);
-          localStorage.setItem(`registeredTime-${idx}`, snapshot.registeredTime.toString());
+          safeSetItem(`registeredTime-${idx}`, snapshot.registeredTime.toString());
         }
         if (typeof snapshot.timeCriterionEnabled === "boolean") {
           setTimeCriterionEnabled(snapshot.timeCriterionEnabled);
-          localStorage.setItem("timeCriterionEnabled", snapshot.timeCriterionEnabled ? "on" : "off");
+          safeSetItem("timeCriterionEnabled", snapshot.timeCriterionEnabled ? "on" : "off");
         }
       }
     } catch (err) {
@@ -465,7 +466,7 @@ const JudgePage = () => {
     const elapsed = Math.max(0, totalDurationSec() - current);
     setRegisteredTime(elapsed);
     try {
-      localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
+      safeSetItem(`registeredTime-${idx}`, elapsed.toString());
     } catch (err) {
       debugError("Failed storing registered time", err);
     }
@@ -590,7 +591,7 @@ const JudgePage = () => {
                   const elapsed = Math.max(0, totalDurationSec() - current);
                   timeToSend = elapsed;
                   try {
-                    localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
+                    safeSetItem(`registeredTime-${idx}`, elapsed.toString());
                   } catch (err) {
                     debugError("Failed to persist computed registered time", err);
                   }
@@ -608,7 +609,7 @@ const JudgePage = () => {
             const competitorIdx = box.concurenti.findIndex(c => c.nume === currentClimber);
             if (competitorIdx !== -1) {
               box.concurenti[competitorIdx].marked = true;
-              localStorage.setItem("listboxes", JSON.stringify(boxes));
+              safeSetItem("listboxes", JSON.stringify(boxes));
             }
           }
         }}

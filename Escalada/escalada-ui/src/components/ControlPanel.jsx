@@ -1,6 +1,8 @@
 import QRCode from 'react-qr-code';
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import { debugLog, debugWarn, debugError } from '../utilis/debug';
+import { safeSetItem, safeGetItem, safeRemoveItem } from '../utilis/storage';
+import { sanitizeBoxName, sanitizeCompetitorName } from '../utilis/sanitize';
 import ModalUpload from "./ModalUpload";
 import ModalTimer from "./ModalTimer";
 import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime, getSessionId, setSessionId, resetBox } from '../utilis/contestActions';
@@ -138,9 +140,10 @@ const ControlPanel = () => {
   
   // WebSocket: subscribe to each box channel and mirror updates from JudgePage
   const wsRefs = useRef({});
+  const disconnectFnsRef = useRef({}); // TASK 2.4: Store disconnect functions for cleanup
   const syncTimeCriterion = (enabled) => {
     setTimeCriterionEnabled(enabled);
-    localStorage.setItem("timeCriterionEnabled", enabled ? "on" : "off");
+    safeSetItem("timeCriterionEnabled", enabled ? "on" : "off");
   };
   const propagateTimeCriterion = async (enabled) => {
     syncTimeCriterion(enabled);
@@ -184,7 +187,6 @@ const ControlPanel = () => {
     });
   }, [listboxes]);
   useEffect(() => {
-    const disconnectFns = {}; // Track disconnect functions from hooks
     
     listboxes.forEach((lb, idx) => {
       // Only create new WebSocket if we don't have one for this idx
@@ -373,7 +375,7 @@ const ControlPanel = () => {
         };
         
         wsRefs.current[idx] = ws;
-        disconnectFns[idx] = () => {
+        disconnectFnsRef.current[idx] = () => {
           if (heartbeatInterval) {
             clearInterval(heartbeatInterval);
           }
@@ -384,23 +386,51 @@ const ControlPanel = () => {
       }
     });
     
-    // Cleanup: close WebSockets that are no longer in the list
+    // Cleanup: close WebSockets that are no longer in the list (box deletions)
     return () => {
       const currentIndices = new Set(listboxes.map((_, idx) => idx));
       Object.keys(wsRefs.current).forEach(idx => {
         if (!currentIndices.has(parseInt(idx))) {
-          if (disconnectFns[idx]) {
-            disconnectFns[idx]();
+          if (disconnectFnsRef.current[idx]) {
+            disconnectFnsRef.current[idx]();
           }
           const ws = wsRefs.current[idx];
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.close();
           }
           delete wsRefs.current[idx];
+          delete disconnectFnsRef.current[idx];
         }
       });
     };
   }, [listboxes]);
+
+  // TASK 2.4: Cleanup ALL WebSockets on component unmount (memory leak fix)
+  useEffect(() => {
+    return () => {
+      debugLog('[ControlPanel] Unmounting - closing all WebSocket connections');
+      
+      // Close ALL WebSockets when component unmounts
+      Object.keys(wsRefs.current).forEach(idx => {
+        if (disconnectFnsRef.current[idx]) {
+          disconnectFnsRef.current[idx]();
+        }
+        const ws = wsRefs.current[idx];
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+          try {
+            ws.close(1000, 'ControlPanel unmounting');
+          } catch (err) {
+            debugError(`Error closing WebSocket for box ${idx}:`, err);
+          }
+        }
+      });
+      
+      // Clear all refs to prevent memory leaks
+      wsRefs.current = {};
+      disconnectFnsRef.current = {};
+    };
+  }, []); // Empty dependency array - only run on mount/unmount
+
   // Ascultă sincronizarea timerelor via localStorage (evenimentul 'storage')
   useEffect(() => {
     // BroadcastChannel pentru comenzi timer (START/STOP/RESUME) din alte ferestre
@@ -515,11 +545,7 @@ const ControlPanel = () => {
     const total = defaultTimerSec(idx);
     const elapsed = Math.max(0, total - current);
     setRegisteredTimes(prev => ({ ...prev, [idx]: elapsed }));
-    try {
-      localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
-    } catch (err) {
-      debugError("Failed to save registered time", err);
-    }
+    safeSetItem(`registeredTime-${idx}`, elapsed.toString());
     registerTime(idx, elapsed);
   };
 
@@ -610,11 +636,11 @@ const ControlPanel = () => {
 
 
   useEffect(() => {
-    localStorage.setItem("listboxes", JSON.stringify(listboxes));
+    safeSetItem("listboxes", JSON.stringify(listboxes));
   }, [listboxes]);
 
   useEffect(() => {
-    localStorage.setItem("timeCriterionEnabled", timeCriterionEnabled ? "on" : "off");
+    safeSetItem("timeCriterionEnabled", timeCriterionEnabled ? "on" : "off");
   }, [timeCriterionEnabled]);
 
   useEffect(() => {
@@ -695,17 +721,13 @@ const ControlPanel = () => {
         }
       ];
       try {
-        localStorage.setItem("listboxes", JSON.stringify(next));
+        safeSetItem("listboxes", JSON.stringify(next));
       } catch (err) {
         debugError("Failed to persist listboxes to localStorage", err);
       }
       return next;
     });
-    try {
-      localStorage.setItem(`climbingTime-${newIdx}`, timerPreset);
-    } catch (err) {
-      debugError(`[ControlPanel] Failed to save climbingTime for box ${newIdx}:`, err);
-    }
+    safeSetItem(`climbingTime-${newIdx}`, timerPreset);
     // initialize counters for the new box
     setHoldClicks(prev => ({ ...prev, [newIdx]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [newIdx]: false }));
@@ -767,7 +789,7 @@ const ControlPanel = () => {
           const newVersionKey = `boxVersion-${newIdx}`;
           const version = localStorage.getItem(oldVersionKey);
           if (version) {
-            localStorage.setItem(newVersionKey, version);
+            safeSetItem(newVersionKey, version);
             localStorage.removeItem(oldVersionKey);
           }
           // Move sessionId from old index to new index
@@ -775,7 +797,7 @@ const ControlPanel = () => {
           const newSessionKey = `sessionId-${newIdx}`;
           const sessionId = localStorage.getItem(oldSessionKey);
           if (sessionId) {
-            localStorage.setItem(newSessionKey, sessionId);
+            safeSetItem(newSessionKey, sessionId);
             localStorage.removeItem(oldSessionKey);
           }
           // Move other per-box localStorage keys
@@ -784,7 +806,7 @@ const ControlPanel = () => {
             const newKey = `${key}-${newIdx}`;
             const value = localStorage.getItem(oldKey);
             if (value) {
-              localStorage.setItem(newKey, value);
+              safeSetItem(newKey, value);
               localStorage.removeItem(oldKey);
             }
           });
@@ -895,7 +917,7 @@ const ControlPanel = () => {
     if (tab && !tab.closed) {
       const lb = listboxes[index];
       const preset = getTimerPreset(index);
-      localStorage.setItem(`climbingTime-${index}`, preset);
+      safeSetItem(`climbingTime-${index}`, preset);
       // send INIT_ROUTE via HTTP+WS
       initRoute(index, lb.routeIndex, lb.holdsCount, lb.concurenti, preset);
     }
@@ -1033,8 +1055,8 @@ const ControlPanel = () => {
       if (typeof timeVal === "number" && !Number.isNaN(timeVal)) {
         times[competitor][routeIdx] = timeVal;
       }
-      localStorage.setItem(`ranking-${boxIdx}`, JSON.stringify(scores));
-      localStorage.setItem(`rankingTimes-${boxIdx}`, JSON.stringify(times));
+      safeSetItem(`ranking-${boxIdx}`, JSON.stringify(scores));
+      safeSetItem(`rankingTimes-${boxIdx}`, JSON.stringify(times));
     } catch (err) {
       debugError("Failed to persist ranking entry", err);
     }
@@ -1054,7 +1076,7 @@ const ControlPanel = () => {
         const total = defaultTimerSec(boxIdx);
         const elapsed = Math.max(0, total - current);
         // salvează pentru consistență locală
-        localStorage.setItem(`registeredTime-${boxIdx}`, elapsed.toString());
+        safeSetItem(`registeredTime-${boxIdx}`, elapsed.toString());
         setRegisteredTimes(prev => ({ ...prev, [boxIdx]: elapsed }));
         return elapsed;
       }
@@ -1196,7 +1218,7 @@ const ControlPanel = () => {
             isOpen={showTimerModal}
             onClose={() => setShowTimerModal(false)}
             onSet={(time) => {
-                localStorage.setItem("climbingTime", time);
+                safeSetItem("climbingTime", time);
                 setClimbingTime(time);
             }}
             timeCriterionEnabled={timeCriterionEnabled}
@@ -1219,7 +1241,7 @@ const ControlPanel = () => {
           >
             <summary className="flex justify-between items-center text-lg font-semibold cursor-pointer p-2 bg-gray-100">
               <span>
-                {lb.categorie} – Traseu {lb.routeIndex}/{lb.routesCount}
+                {sanitizeBoxName(lb.categorie)} – Traseu {lb.routeIndex}/{lb.routesCount}
               </span>
               <div className="px-2 py-1 text-right text-sm text-gray-600">
                 {typeof controlTimers[idx] === "number"
@@ -1238,7 +1260,7 @@ const ControlPanel = () => {
                       c.marked ? "marked-red " : ""
                     }${isClimbing ? "bg-yellow-500 text-white animate-pulse " : ""}py-1 px-2 rounded`}
                   >
-                    {c.nume} – {c.club}
+                    {sanitizeCompetitorName(c.nume)} – {sanitizeBoxName(c.club)}
                   </li>
                 );
               })}
@@ -1433,7 +1455,7 @@ const ControlPanel = () => {
 
               <button
                 className="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-                onClick={() => handleCeremony(lb.categorie)}
+                onClick={() => handleCeremony(sanitizeBoxName(lb.categorie))}
               >
                 Award Ceremony
               </button>

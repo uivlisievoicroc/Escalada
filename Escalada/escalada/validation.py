@@ -60,6 +60,9 @@ class ValidatedCmd(BaseModel):
     # Session token to prevent state bleed between box deletions
     sessionId: Optional[str] = Field(None, min_length=1, max_length=64, description="Box session token")
     
+    # Box version for stale command detection (prevents commands from old browser tabs)
+    boxVersion: Optional[int] = Field(None, ge=0, le=99999, description="Box version for stale command detection")
+    
     @field_validator('type')
     @classmethod
     def validate_type(cls, v: str) -> str:
@@ -124,7 +127,7 @@ class ValidatedCmd(BaseModel):
     @field_validator('timerPreset')
     @classmethod
     def validate_timer_preset(cls, v: Optional[str]) -> Optional[str]:
-        """Validate timer preset format (MM:SS)"""
+        """Validate timer preset format (MM:SS) and normalize to zero-padded format"""
         if v is None:
             return v
         
@@ -145,10 +148,16 @@ class ValidatedCmd(BaseModel):
                 raise ValueError('minutes must be 0-99')
             if secs < 0 or secs > 59:
                 raise ValueError('seconds must be 0-59')
+            
+            # TASK 2.2: Auto-pad single-digit minutes (5:00 → 05:00)
+            # This prevents frontend/backend mismatch where frontend sends "5:00"
+            normalized = f"{mins:02d}:{secs:02d}"
+            
+            logger.debug(f'Normalized timerPreset: {v} → {normalized}')
+            return normalized
+            
         except (ValueError, IndexError):
             raise ValueError('timerPreset must be MM:SS format with valid numbers')
-        
-        return v
     
     @field_validator('competitors')
     @classmethod
