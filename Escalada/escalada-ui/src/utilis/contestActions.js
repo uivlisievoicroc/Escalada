@@ -1,5 +1,6 @@
 const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
 const API = `${API_PROTOCOL}://${window.location.hostname}:8000/api/cmd`;
+import { debugError } from './debug';
 // src/utils/contestActions.js
 
 // ==================== FIX 3: SESSION ID HELPERS ====================
@@ -26,7 +27,7 @@ export async function startTimer(boxId) {
       JSON.stringify({ type: "START_TIMER", boxId, ts: Date.now() })
     );
   } catch (err) {
-    console.error("Failed to persist START_TIMER command", err);
+    debugError("Failed to persist START_TIMER command", err);
   }
     await fetch(API, {
       method: 'POST',
@@ -42,7 +43,7 @@ export async function startTimer(boxId) {
       JSON.stringify({ type: "STOP_TIMER", boxId, ts: Date.now() })
     );
   } catch (err) {
-    console.error("Failed to persist STOP_TIMER command", err);
+    debugError("Failed to persist STOP_TIMER command", err);
   }
     await fetch(API, {
       method: 'POST',
@@ -58,7 +59,7 @@ export async function startTimer(boxId) {
       JSON.stringify({ type: "RESUME_TIMER", boxId, ts: Date.now() })
     );
   } catch (err) {
-    console.error("Failed to persist RESUME_TIMER command", err);
+    debugError("Failed to persist RESUME_TIMER command", err);
   }
     await fetch(API, {
       method: 'POST',

@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { debugLog, debugError } from './debug';
 
 const logger = console;
+const MAX_RECONNECT_ATTEMPTS = 10; // Circuit breaker threshold
 
 export function useWebSocketWithHeartbeat(url, onMessage) {
   const [connected, setConnected] = useState(false);
   const [wsInstance, setWsInstance] = useState(null);
+  const [wsError, setWsError] = useState(''); // Circuit breaker error message
   const wsRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const onMessageRef = useRef(onMessage);
@@ -59,10 +62,11 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
             return;
           }
           
-          console.log('🟢 [Hook onopen] TRIGGERED for', url, 'readyState:', ws.readyState, 'timestamp:', new Date().toISOString());
+          debugLog('🟢 [Hook onopen] TRIGGERED for', url, 'readyState:', ws.readyState, 'timestamp:', new Date().toISOString());
           logger.log(`[WebSocket] Connected to ${url}`);
-          console.log('🟢 [Hook onopen] Setting connected=true and wsInstance');
+          debugLog('🟢 [Hook onopen] Setting connected=true and wsInstance');
           setConnected(true);
+          setWsError(''); // Clear error on successful connection
           reconnectAttemptsRef.current = 0;
           wsRef.current = ws;
           setWsInstance(ws);
@@ -100,7 +104,7 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
 
         ws.onclose = () => {
           isConnectingRef.current = false;
-          console.log('🔌 [Hook onclose] CLOSED for', url, 'timestamp:', new Date().toISOString());
+          debugLog('🔌 [Hook onclose] CLOSED for', url, 'timestamp:', new Date().toISOString());
           
           // Check cleanup state before reconnecting
           if (cleanupCalled) {
@@ -112,17 +116,36 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
           setConnected(false);
           setWsInstance(null);
 
+          // Circuit breaker: stop reconnecting after max attempts
+          if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+            const errorMsg = `Connection to server failed after ${MAX_RECONNECT_ATTEMPTS} attempts. Please check your network and refresh the page.`;
+            debugLog('🔴 [Hook onclose] Circuit breaker triggered:', errorMsg);
+            logger.error('[WebSocket] Max reconnect attempts reached');
+            setWsError(errorMsg);
+            setConnected(false);
+            setWsInstance(null);
+            return; // Stop reconnect loop
+          }
+
           // Exponential backoff: 1s, 2s, 4s, ... max 30s
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current || 0), 30000);
           reconnectAttemptsRef.current = (reconnectAttemptsRef.current || 0) + 1;
-          console.log(`🔄 [Hook onclose] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+          debugLog(`🔄 [Hook onclose] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
           logger.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
           reconnectTimeoutId = setTimeout(connect, delay);
         };
 
         ws.onerror = (event) => {
           isConnectingRef.current = false;
-          console.log('🔴 [Hook onerror] ERROR for', url, 'event:', event, 'timestamp:', new Date().toISOString());
+          
+          // Suppress expected error after cleanup (StrictMode double-mount)
+          // When cleanup is called before socket opens, this error is expected and not actionable
+          if (cleanupCalled && reconnectAttemptsRef.current === 0) {
+            logger.debug('[Hook onerror] Suppressing expected StrictMode error during cleanup');
+            return;
+          }
+          
+          debugError('🔴 [Hook onerror] ERROR for', url, 'event:', event, 'timestamp:', new Date().toISOString());
           logger.error('[WebSocket] Error:', event);
         };
 
@@ -162,6 +185,7 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
   return {
     ws: wsInstance,
     connected,
+    wsError, // Expose error to caller for user feedback
     reconnect: () => {
       // Force reconnect by closing existing socket; connect loop will re-open
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {

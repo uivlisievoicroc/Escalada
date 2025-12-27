@@ -1,4 +1,5 @@
 import React from 'react';
+import { debugError } from '../utilis/debug';
 
 /**
  * Error Boundary component to catch React errors
@@ -25,7 +26,7 @@ class ErrorBoundary extends React.Component {
     });
     
     // Log error to console in development
-    console.error('Error caught by boundary:', error, errorInfo);
+    debugError('Error caught by boundary:', error, errorInfo);
     
     // TODO: Log to error reporting service (Sentry, etc.)
     // logErrorToService(error, errorInfo);

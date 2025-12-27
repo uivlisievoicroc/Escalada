@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { debugLog, debugError } from "../utilis/debug";
 
 const API_PROTOCOL = window.location.protocol === "https:" ? "https" : "http";
 const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000/api`;
@@ -37,13 +38,13 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
 
       if (!res.ok) {
         const errorText = await res.text();
-        console.error("Eroare la upload:", errorText);
+        debugError("Eroare la upload:", errorText);
         alert(`Eroare: ${errorText}`);
         return;
       }
 
       const data = await res.json();
-      console.log('✅ Upload successful:', data);
+      debugLog('✅ Upload successful:', data);
 
       // Notifică ControlPanel cu noul listbox
       if (data && data.listbox) {
@@ -55,11 +56,11 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
         onClose?.();
         alert('✅ Listbox încărcat cu succes!');
       } else {
-        console.error('No listbox in response:', data);
+        debugError('No listbox in response:', data);
         alert('Eroare: nu s-a putut procesa răspunsul');
       }
     } catch (err) {
-      console.error('❌ Upload error:', err);
+      debugError('❌ Upload error:', err);
       alert('Eroare la conectare: ' + err.message);
     }
   };

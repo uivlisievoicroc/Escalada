@@ -1,5 +1,6 @@
 import QRCode from 'react-qr-code';
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
+import { debugLog, debugWarn, debugError } from '../utilis/debug';
 import ModalUpload from "./ModalUpload";
 import ModalTimer from "./ModalTimer";
 import { startTimer, stopTimer, resumeTimer, updateProgress, requestActiveCompetitor, submitScore, initRoute, registerTime, getSessionId, setSessionId, resetBox } from '../utilis/contestActions';
@@ -29,7 +30,9 @@ const readClimbingTime = () => {
   try {
     const v = JSON.parse(raw);
     if (typeof v === 'string') return v;
-  } catch {}
+  } catch (err) {
+    debugLog('[readClimbingTime] Failed to parse JSON, using fallback regex:', err);
+  }
   const m = raw.match(/^"?(\d{1,2}):(\d{2})"?$/);
   if (m) {
     const mm = m[1].padStart(2, '0');
@@ -149,7 +152,7 @@ const ControlPanel = () => {
         body: JSON.stringify({ boxId: -1, type: 'SET_TIME_CRITERION', timeCriterionEnabled: enabled })
       });
     } catch (err) {
-      console.error("Failed to propagate time criterion toggle", err);
+      debugError("Failed to propagate time criterion toggle", err);
     }
   };
   const handleToggleTimeCriterion = () => {
@@ -175,7 +178,7 @@ const ControlPanel = () => {
             }
           }
         } catch (err) {
-          console.error(`Failed to prefetch state/session for box ${idx}`, err);
+          debugError(`Failed to prefetch state/session for box ${idx}`, err);
         }
       })();
     });
@@ -191,7 +194,7 @@ const ControlPanel = () => {
             syncTimeCriterion(!!msg.timeCriterionEnabled);
             return;
           }
-          console.log("📥 WS mesaj primit în ControlPanel:", msg);
+          debugLog("📥 WS mesaj primit în ControlPanel:", msg);
           if (+msg.boxId !== idx) return;
 
           switch (msg.type) {
@@ -302,7 +305,7 @@ const ControlPanel = () => {
         let lastPong = Date.now();
         
         ws.onopen = () => {
-          console.log(`✅ WebSocket connected for box ${idx}`);
+          debugLog(`✅ WebSocket connected for box ${idx}`);
           lastPong = Date.now();
           
           // Start heartbeat monitoring
@@ -312,7 +315,7 @@ const ControlPanel = () => {
             
             // If no PONG received for 60 seconds, reconnect
             if (timeSinceLastPong > 60000) {
-              console.warn(`⚠️ Heartbeat timeout for box ${idx}, closing connection...`);
+              debugWarn(`⚠️ Heartbeat timeout for box ${idx}, closing connection...`);
               ws.close();
               return;
             }
@@ -322,7 +325,7 @@ const ControlPanel = () => {
               try {
                 ws.send(JSON.stringify({ type: 'PONG', timestamp: now }));
               } catch (err) {
-                console.error(`Failed to send PONG for box ${idx}:`, err);
+                debugError(`Failed to send PONG for box ${idx}:`, err);
               }
             }
           }, 30000); // Every 30 seconds
@@ -343,16 +346,16 @@ const ControlPanel = () => {
             
             handleMessage(msg);
           } catch (err) {
-            console.error(`Error parsing WebSocket message for box ${idx}:`, err);
+            debugError(`Error parsing WebSocket message for box ${idx}:`, err);
           }
         };
         
         ws.onerror = (err) => {
-          console.error(`❌ WebSocket error for box ${idx}:`, err);
+          debugError(`❌ WebSocket error for box ${idx}:`, err);
         };
         
         ws.onclose = () => {
-          console.log(`🔌 WebSocket closed for box ${idx}`);
+          debugLog(`🔌 WebSocket closed for box ${idx}`);
           if (heartbeatInterval) {
             clearInterval(heartbeatInterval);
           }
@@ -362,7 +365,7 @@ const ControlPanel = () => {
           setTimeout(() => {
             const stillExists = listboxes.some((_, i) => i === idx);
             if (stillExists && !wsRefs.current[idx]) {
-              console.log(`🔄 Auto-reconnecting WebSocket for box ${idx}...`);
+              debugLog(`🔄 Auto-reconnecting WebSocket for box ${idx}...`);
               // Trigger re-render to recreate connection
               setListboxes(prev => [...prev]);
             }
@@ -418,7 +421,7 @@ const ControlPanel = () => {
         const cmd = JSON.parse(e.newValue);
         handleTimerCmd(cmd);
       } catch (err) {
-        console.error("Failed to parse timer-cmd from storage", err);
+        debugError("Failed to parse timer-cmd from storage", err);
       }
     };
     window.addEventListener("storage", onStorageCmd);
@@ -447,7 +450,7 @@ const ControlPanel = () => {
           }
         }
       } catch (err) {
-        console.error("Failed to parse timer-sync", err);
+        debugError("Failed to parse timer-sync", err);
       }
     };
     window.addEventListener("storage", onStorageTimer);
@@ -498,7 +501,7 @@ const ControlPanel = () => {
     try {
       localStorage.removeItem(`registeredTime-${idx}`);
     } catch (err) {
-      console.error("Failed to clear registered time", err);
+      debugError("Failed to clear registered time", err);
     }
   };
 
@@ -515,7 +518,7 @@ const ControlPanel = () => {
     try {
       localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
     } catch (err) {
-      console.error("Failed to save registered time", err);
+      debugError("Failed to save registered time", err);
     }
     registerTime(idx, elapsed);
   };
@@ -598,7 +601,7 @@ const ControlPanel = () => {
           competitor: competitorName,
           sessionId: getSessionId(idx),
         })
-      }).catch(err => console.error("ACTIVE_CLIMBER failed", err));
+      }).catch(err => debugError("ACTIVE_CLIMBER failed", err));
     };
 
     window.addEventListener("storage", handleStorageClimber);
@@ -621,7 +624,7 @@ const ControlPanel = () => {
       try {
         localStorage.removeItem(`registeredTime-${idx}`);
       } catch (err) {
-        console.error("Failed to clear registered times on toggle off", err);
+        debugError("Failed to clear registered times on toggle off", err);
       }
     });
   }, [timeCriterionEnabled, listboxes]);
@@ -633,7 +636,7 @@ const ControlPanel = () => {
           const updated = JSON.parse(e.newValue || '[]');
           setListboxes(updated);
         } catch (err) {
-          console.error("Failed to parse listboxes from storage", err);
+          debugError("Failed to parse listboxes from storage", err);
         }
       }
     };
@@ -663,7 +666,7 @@ const ControlPanel = () => {
             setShowScoreModal(true);
           }
         } catch (error) {
-          console.error("Eroare la parsarea datelor:", error);
+          debugError("Eroare la parsarea datelor:", error);
         }
       }
     };
@@ -694,13 +697,15 @@ const ControlPanel = () => {
       try {
         localStorage.setItem("listboxes", JSON.stringify(next));
       } catch (err) {
-        console.error("Failed to persist listboxes to localStorage", err);
+        debugError("Failed to persist listboxes to localStorage", err);
       }
       return next;
     });
     try {
       localStorage.setItem(`climbingTime-${newIdx}`, timerPreset);
-    } catch {}
+    } catch (err) {
+      debugError(`[ControlPanel] Failed to save climbingTime for box ${newIdx}:`, err);
+    }
     // initialize counters for the new box
     setHoldClicks(prev => ({ ...prev, [newIdx]: 0 }));
     setUsedHalfHold(prev => ({ ...prev, [newIdx]: false }));
@@ -714,13 +719,13 @@ const ControlPanel = () => {
     try {
       await resetBox(index);
     } catch (err) {
-      console.error(`RESET_BOX failed for box ${index}`, err);
+      debugError(`RESET_BOX failed for box ${index}`, err);
     }
     // ==================== FIX 2: EXPLICIT WS CLOSE ====================
     // Close WebSocket BEFORE deleting from state to prevent ghost WS
     const ws = wsRefs.current[index];
     if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log(`Closing WebSocket for deleted box ${index}`);
+      debugLog(`Closing WebSocket for deleted box ${index}`);
       ws.close(1000, "Box deleted");
     }
     delete wsRefs.current[index];
@@ -737,7 +742,7 @@ const ControlPanel = () => {
       localStorage.removeItem(`sessionId-${index}`);
       localStorage.removeItem(`boxVersion-${index}`);
     } catch (err) {
-      console.error("Failed to clear session/version on delete", err);
+      debugError("Failed to clear session/version on delete", err);
     }
     
     setListboxes((prev) => {
@@ -811,26 +816,33 @@ const ControlPanel = () => {
       localStorage.removeItem(`ranking-${index}`);
       localStorage.removeItem(`rankingTimes-${index}`);
     } catch (err) {
-      console.error("Failed to clear cached rankings on delete", err);
+      debugError("Failed to clear cached rankings on delete", err);
     }
   };
 
 
   // Reset listbox to its initial state
   const handleReset = async (index) => {
+    // NEW: Bounds check for box index
+    if (index < 0 || index >= listboxes.length) {
+      debugError(`Invalid box index: ${index}`);
+      alert(`Invalid box index: ${index}`);
+      return;
+    }
+    
     const boxToReset = listboxes[index];
     
     // ==================== FIX 3: GUARD HOLDSCOUNT ARRAY ====================
     // Validate that holdsCounts exists and has at least one element before reset
     if (!boxToReset || !Array.isArray(boxToReset.holdsCounts) || boxToReset.holdsCounts.length === 0) {
-      console.error(`Cannot reset box ${index}: missing or empty holdsCounts array`, boxToReset);
+      debugError(`Cannot reset box ${index}: missing or empty holdsCounts array`, boxToReset);
       return;
     }
     // Reset backend state and regenerate sessionId
     try {
       await resetBox(index);
     } catch (err) {
-      console.error(`RESET_BOX failed for box ${index}`, err);
+      debugError(`RESET_BOX failed for box ${index}`, err);
     }
     
     setListboxes(prev =>
@@ -891,15 +903,30 @@ const ControlPanel = () => {
  
   // Advance to the next route on demand
   const handleNextRoute = (index) => {
+    // NEW: Bounds check for box index
+    if (index < 0 || index >= listboxes.length) {
+      debugError(`Invalid box index: ${index}`);
+      alert(`Invalid box index: ${index}`);
+      return;
+    }
+    
+    const currentBox = listboxes[index];
+    const next = currentBox.routeIndex + 1;
+    if (next > currentBox.routesCount) {
+      debugWarn(`Cannot advance to next route: route ${next} exceeds routesCount ${currentBox.routesCount}`);
+      alert('Already on the last route');
+      return;
+    }
+    
     setListboxes(prev =>
       prev.map((lb, i) => {
         if (i !== index) return lb;
-        const next = lb.routeIndex + 1;
-        if (next > lb.routesCount) return lb;  // nu depășește
+        const nextRoute = lb.routeIndex + 1;
+        if (nextRoute > lb.routesCount) return lb;  // nu depășește
         return {
           ...lb,
-          routeIndex: next,
-          holdsCount: lb.holdsCounts[next - 1],
+          routeIndex: nextRoute,
+          holdsCount: lb.holdsCounts[nextRoute - 1],
           initiated: false,
           concurenti: lb.concurenti.map(c => ({ ...c, marked: false })),
         };
@@ -914,14 +941,14 @@ const ControlPanel = () => {
       localStorage.removeItem(`ranking-${index}`);
       localStorage.removeItem(`rankingTimes-${index}`);
     } catch (err) {
-      console.error("Failed to clear cached rankings on reset", err);
+      debugError("Failed to clear cached rankings on reset", err);
     }
     // Send INIT_ROUTE for the next route
-    const currentBox = listboxes[index];
-    const nextRouteIndex = currentBox.routeIndex + 1;
-    if (nextRouteIndex <= currentBox.routesCount) {
-      const nextHoldsCount = currentBox.holdsCounts[nextRouteIndex - 1];
-      const nextCompetitors = currentBox.concurenti.map(c => ({ ...c, marked: false }));
+    const updatedBox = listboxes[index];
+    const nextRouteIndex = updatedBox.routeIndex + 1;
+    if (nextRouteIndex <= updatedBox.routesCount) {
+      const nextHoldsCount = updatedBox.holdsCounts[nextRouteIndex - 1];
+      const nextCompetitors = updatedBox.concurenti.map(c => ({ ...c, marked: false }));
       initRoute(index, nextRouteIndex, nextHoldsCount, nextCompetitors, getTimerPreset(index));
     }
   };
@@ -933,7 +960,7 @@ const ControlPanel = () => {
     try {
       await startTimer(boxIdx);
     } catch (err) {
-      console.error("START_TIMER failed:", err);
+      debugError("START_TIMER failed:", err);
       setTimerStates(prev => ({ ...prev, [boxIdx]: "idle" }));
     }
   };
@@ -943,7 +970,7 @@ const ControlPanel = () => {
     try {
       await stopTimer(boxIdx);
     } catch (err) {
-      console.error("STOP_TIMER failed:", err);
+      debugError("STOP_TIMER failed:", err);
       setTimerStates(prev => ({ ...prev, [boxIdx]: "running" }));
     }
   };
@@ -954,7 +981,7 @@ const ControlPanel = () => {
     try {
       await resumeTimer(boxIdx);
     } catch (err) {
-      console.error("RESUME_TIMER failed:", err);
+      debugError("RESUME_TIMER failed:", err);
       setTimerStates(prev => ({ ...prev, [boxIdx]: "paused" }));
     }
   };
@@ -969,7 +996,7 @@ const ControlPanel = () => {
       }
       await updateProgress(boxIdx, 1);
     } catch (err) {
-      console.error("PROGRESS_UPDATE failed:", err);
+      debugError("PROGRESS_UPDATE failed:", err);
     }
   };
 
@@ -983,7 +1010,7 @@ const ControlPanel = () => {
       }
       await updateProgress(boxIdx, 0.1);
     } catch (err) {
-      console.error("PROGRESS_UPDATE 0.1 failed:", err);
+      debugError("PROGRESS_UPDATE 0.1 failed:", err);
     }
   };
 
@@ -1009,7 +1036,7 @@ const ControlPanel = () => {
       localStorage.setItem(`ranking-${boxIdx}`, JSON.stringify(scores));
       localStorage.setItem(`rankingTimes-${boxIdx}`, JSON.stringify(times));
     } catch (err) {
-      console.error("Failed to persist ranking entry", err);
+      debugError("Failed to persist ranking entry", err);
     }
   };
 
@@ -1056,7 +1083,7 @@ const ControlPanel = () => {
       cachedScores = JSON.parse(localStorage.getItem(`ranking-${boxIdx}`) || "{}");
       cachedTimes = JSON.parse(localStorage.getItem(`rankingTimes-${boxIdx}`) || "{}");
     } catch (err) {
-      console.error("Failed to read cached rankings", err);
+      debugError("Failed to read cached rankings", err);
     }
     if (box && box.concurenti) {
       box.concurenti.forEach(c => {
@@ -1092,7 +1119,7 @@ const ControlPanel = () => {
       ranking = JSON.parse(localStorage.getItem(`ranking-${boxIdx}`) || "{}");
       rankingTimes = JSON.parse(localStorage.getItem(`rankingTimes-${boxIdx}`) || "{}");
     } catch (err) {
-      console.error("Failed to read cached rankings for export", err);
+      debugError("Failed to read cached rankings for export", err);
     }
     const clubMap = {};
     (box.concurenti || []).forEach(c => { clubMap[c.nume] = c.club; });
@@ -1113,7 +1140,7 @@ const ControlPanel = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       showRankingStatus(boxIdx, "Clasament generat");
     } catch (err) {
-      console.error("Eroare la generarea clasamentului:", err);
+      debugError("Eroare la generarea clasamentului:", err);
       showRankingStatus(boxIdx, "Eroare la generare", "error");
     }
   };
@@ -1135,7 +1162,7 @@ const ControlPanel = () => {
         win.ceremonyWinners = winners;
       })
       .catch(err => {
-        console.error('Error fetching podium:', err);
+        debugError('Error fetching podium:', err);
         alert('Nu am putut obține podium-ul de la server.');
         win.close();
       });

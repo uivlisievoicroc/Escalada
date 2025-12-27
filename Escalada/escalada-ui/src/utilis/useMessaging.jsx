@@ -1,4 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
+import { debugLog, debugWarn, debugError } from './debug';
 
 /**
  * Unified messaging hook for WebSocket + BroadcastChannel
@@ -34,7 +35,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
       let heartbeatInterval = null;
 
       ws.onopen = () => {
-        console.log('📡 Messaging WebSocket connected:', wsUrl);
+        debugLog('📡 Messaging WebSocket connected:', wsUrl);
         
         // Flush message queue
         while (messageQueueRef.current.length > 0) {
@@ -42,7 +43,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
           try {
             ws.send(JSON.stringify(msg));
           } catch (err) {
-            console.error('Failed to send queued message:', err);
+            debugError('Failed to send queued message:', err);
           }
         }
 
@@ -53,7 +54,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
           const timeSinceLastPong = now - lastPong;
 
           if (timeSinceLastPong > heartbeatInterval * 2) {
-            console.warn('⏱️  Messaging heartbeat timeout');
+            debugWarn('⏱️  Messaging heartbeat timeout');
             ws.close();
             return;
           }
@@ -62,7 +63,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
             try {
               ws.send(JSON.stringify({ type: 'PONG', timestamp: now }));
             } catch (err) {
-              console.error('Failed to send PONG:', err);
+              debugError('Failed to send PONG:', err);
             }
           }
         }, heartbeatInterval);
@@ -86,16 +87,16 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
             onMessage(msg, ws);
           }
         } catch (err) {
-          console.error('Messaging: Failed to parse message:', err);
+          debugError('Messaging: Failed to parse message:', err);
         }
       };
 
       ws.onerror = (error) => {
-        console.error('❌ Messaging WebSocket error:', error);
+        debugError('❌ Messaging WebSocket error:', error);
       };
 
       ws.onclose = () => {
-        console.log('🔌 Messaging WebSocket closed');
+        debugLog('🔌 Messaging WebSocket closed');
         
         if (heartbeatInterval) {
           clearInterval(heartbeatInterval);
@@ -107,14 +108,14 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
         }
 
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('🔄 Reconnecting messaging WebSocket...');
+          debugLog('🔄 Reconnecting messaging WebSocket...');
           connectWebSocket();
         }, reconnectDelay);
       };
 
       wsRef.current = ws;
     } catch (err) {
-      console.error('Failed to create messaging WebSocket:', err);
+      debugError('Failed to create messaging WebSocket:', err);
     }
   }, [wsUrl, onMessage, reconnectDelay, heartbeatInterval]);
 
@@ -133,7 +134,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
         };
         bcRefs.current[channelName] = bc;
       } catch (err) {
-        console.error(`Failed to create BroadcastChannel ${channelName}:`, err);
+        debugError(`Failed to create BroadcastChannel ${channelName}:`, err);
       }
     });
 
@@ -142,7 +143,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
         try {
           bc.close();
         } catch (err) {
-          console.error('Failed to close BroadcastChannel:', err);
+          debugError('Failed to close BroadcastChannel:', err);
         }
       });
       bcRefs.current = {};
@@ -178,7 +179,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
         ws.send(JSON.stringify(message));
         return true;
       } catch (err) {
-        console.error('Failed to send message via WebSocket:', err);
+        debugError('Failed to send message via WebSocket:', err);
         messageQueueRef.current.push(message);
         return false;
       }
@@ -199,7 +200,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
       try {
         bc.postMessage(message);
       } catch (err) {
-        console.error('Failed to broadcast message:', err);
+        debugError('Failed to broadcast message:', err);
         success = false;
       }
     });

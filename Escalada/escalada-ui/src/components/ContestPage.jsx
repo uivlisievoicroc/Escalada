@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { ResizableBox } from 'react-resizable';
 import 'react-resizable/css/styles.css';
 import { useParams } from 'react-router-dom';
+import { debugLog, debugError } from '../utilis/debug';
 // (WebSocket logic moved into component)
 
 const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
@@ -249,14 +250,18 @@ const ContestPage = () => {
         reconnectRef.current.tries = 0;
         try {
           ws.send(JSON.stringify({ type: 'REQUEST_STATE', boxId: Number(boxId) }));
-        } catch {}
+        } catch (err) {
+          debugError('[ContestPage] Failed to send REQUEST_STATE:', err);
+        }
       };
 
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
           handleMessage(msg);
-        } catch {}
+        } catch (err) {
+          debugError('[ContestPage] Failed to parse WebSocket message:', err, ev.data);
+        }
       };
 
       ws.onerror = () => {
@@ -284,17 +289,27 @@ const ContestPage = () => {
         ws.onmessage = null;
         ws.onerror = null;
         ws.onclose = null;
-      } catch {}
+      } catch (err) {
+        // Expected during cleanup if socket already closed
+        debugLog('[ContestPage cleanup] Handler detachment error (expected):', err);
+      }
       try {
         if (ws.readyState === WebSocket.OPEN) {
           ws.close(1000, 'navigate-away');
         } else if (ws.readyState === WebSocket.CONNECTING) {
           // Avoid closing while CONNECTING (causes browser warning). Close once it opens.
           ws.addEventListener('open', () => {
-            try { ws.close(1000, 'navigate-away'); } catch {}
+            try { 
+              ws.close(1000, 'navigate-away'); 
+            } catch (err) {
+              debugLog('[ContestPage cleanup] Close error during deferred cleanup:', err);
+            }
           }, { once: true });
         }
-      } catch {}
+      } catch (err) {
+        // Expected during cleanup if socket state is invalid
+        debugLog('[ContestPage cleanup] WebSocket close error (expected):', err);
+      }
     };
   }, [boxId, getTimerPreset]);
   const [preparing, setPreparing] = useState([]);
@@ -369,7 +384,7 @@ const ContestPage = () => {
         );
       }
     } catch (err) {
-      console.error("Failed to broadcast remaining time", err);
+      debugError("Failed to broadcast remaining time", err);
     }
     if (lastTimerSyncRef.current !== remaining) {
       lastTimerSyncRef.current = remaining;
@@ -377,7 +392,7 @@ const ContestPage = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ boxId: Number(boxId), type: 'TIMER_SYNC', remaining })
-      }).catch(err => console.error("Failed to sync timer to backend", err));
+      }).catch(err => debugError("Failed to sync timer to backend", err));
     }
   }, [boxId]);
 
@@ -619,7 +634,7 @@ const ContestPage = () => {
             localStorage.setItem(`ranking-${boxId}`, JSON.stringify(updatedRanking));
             localStorage.setItem(`rankingTimes-${boxId}`, JSON.stringify(updatedTimes));
           } catch (err) {
-            console.error("Failed to persist rankings", err);
+            debugError("Failed to persist rankings", err);
           }
           // reset progress bar after score submission
           setCurrentHold(0);
@@ -636,7 +651,7 @@ const ContestPage = () => {
               }
             }
           } catch (err) {
-            console.error("Failed to update localStorage listboxes after submit", err);
+            debugError("Failed to update localStorage listboxes after submit", err);
           }
 
           // 3. Advance only if modifying the current competitor who just climbed
@@ -722,7 +737,7 @@ const ContestPage = () => {
                     console.log("✅ Răspuns de la backend:", data);
                   })
                   .catch(err => {
-                    console.error("❌ Eroare la salvarea clasamentului:", err);
+                    debugError("❌ Eroare la salvarea clasamentului:", err);
                   });
               }, 0); // << înlocuiește requestAnimationFrame cu setTimeout
             }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { debugError } from './debug';
 
 /**
  * Custom hook for managing localStorage with error handling
@@ -19,7 +20,7 @@ export function useLocalStorage(key, initialValue) {
         return item;
       }
     } catch (error) {
-      console.error(`Error reading localStorage key "${key}":`, error);
+      debugError(`Error reading localStorage key "${key}":`, error);
       return initialValue;
     }
   });
@@ -35,9 +36,9 @@ export function useLocalStorage(key, initialValue) {
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        console.error(`localStorage quota exceeded for key "${key}"`, error);
+        debugError(`localStorage quota exceeded for key "${key}"`, error);
       } else {
-        console.error(`Error writing to localStorage key "${key}":`, error);
+        debugError(`Error writing to localStorage key "${key}":`, error);
       }
     }
   }, [key, storedValue]);
@@ -49,7 +50,7 @@ export function useLocalStorage(key, initialValue) {
         try {
           setStoredValue(JSON.parse(e.newValue));
         } catch (error) {
-          console.error(`Error parsing storage event for key "${key}":`, error);
+          debugError(`Error parsing storage event for key "${key}":`, error);
         }
       }
     };
@@ -75,7 +76,7 @@ export function useLocalStorageWithRemove(key, initialValue) {
       window.localStorage.removeItem(key);
       setValue(initialValue);
     } catch (error) {
-      console.error(`Error removing localStorage key "${key}":`, error);
+      debugError(`Error removing localStorage key "${key}":`, error);
     }
   }, [key, initialValue]);
 

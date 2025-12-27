@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useParams } from "react-router-dom";
 import { startTimer, stopTimer, resumeTimer, updateProgress, submitScore, registerTime, getSessionId, setSessionId } from '../utilis/contestActions';
 import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
+import { debugLog, debugError } from '../utilis/debug';
 import ModalScore from './ModalScore';
 import ModalModifyScore from './ModalModifyScore';
 
 const JudgePage = () => {
-  console.log('🟡 [JudgePage] Component rendering START');
+  debugLog('🟡 [JudgePage] Component rendering START');
   
   const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
   const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000`;
@@ -14,9 +15,9 @@ const JudgePage = () => {
 
   const { boxId } = useParams();
   const idx = Number(boxId);
-  console.log('🟡 [JudgePage] boxId from params:', boxId, 'idx:', idx);
-  console.log('🟡 [JudgePage] API_BASE:', API_BASE);
-  console.log('🟡 [JudgePage] WS_PROTOCOL:', WS_PROTOCOL);
+  debugLog('🟡 [JudgePage] boxId from params:', boxId, 'idx:', idx);
+  debugLog('🟡 [JudgePage] API_BASE:', API_BASE);
+  debugLog('🟡 [JudgePage] WS_PROTOCOL:', WS_PROTOCOL);
   const [initiated, setInitiated] = useState(false);
   const [timerState, setTimerState] = useState("idle");
   const [usedHalfHold, setUsedHalfHold] = useState(false);
@@ -72,7 +73,6 @@ const JudgePage = () => {
 
   // WebSocket subscription to backend for real-time updates
   const [wsStatus, setWsStatus] = useState("connecting");
-  const [wsError, setWsError] = useState("");
   const [showWsBanner, setShowWsBanner] = useState(true);
 
   const clearRegisteredTime = useCallback(() => {
@@ -80,20 +80,20 @@ const JudgePage = () => {
     try {
       localStorage.removeItem(`registeredTime-${idx}`);
     } catch (err) {
-      console.error("Failed clearing registered time", err);
+      debugError("Failed clearing registered time", err);
     }
   }, [idx]);
 
   // Build WebSocket URL - memoized to prevent infinite render loop
   const WS_URL = useMemo(() => {
     const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}`;
-    console.log('🟡 [JudgePage] WS_URL memoized:', url);
+    debugLog('🟡 [JudgePage] WS_URL memoized:', url);
     return url;
   }, [idx, WS_PROTOCOL]);
 
   // Message handler for all incoming WS messages
   const handleWsMessage = useCallback((msg) => {
-    console.log('🟢 [JudgePage] Handler called with:', msg);
+    debugLog('🟢 [JudgePage] Handler called with:', msg);
     
     if (msg.type === 'TIME_CRITERION') {
       setTimeCriterionEnabled(!!msg.timeCriterionEnabled);
@@ -111,7 +111,7 @@ const JudgePage = () => {
     if (+msg.boxId !== idx) return;
     
     if (msg.type === 'INIT_ROUTE') {
-      console.log('🟢 [JudgePage] Applying INIT_ROUTE:', msg);
+      debugLog('🟢 [JudgePage] Applying INIT_ROUTE:', msg);
       setInitiated(true);
       setMaxScore(msg.holdsCount || 0);
       setCurrentClimber(
@@ -125,19 +125,19 @@ const JudgePage = () => {
       applyTimerPresetSnapshot(msg);
     }
     if (msg.type === 'START_TIMER') {
-      console.log('🟢 [JudgePage] Applying START_TIMER');
+      debugLog('🟢 [JudgePage] Applying START_TIMER');
       setTimerState("running");
     }
     if (msg.type === 'STOP_TIMER') {
-      console.log('🟢 [JudgePage] Applying STOP_TIMER');
+      debugLog('🟢 [JudgePage] Applying STOP_TIMER');
       setTimerState("paused");
     }
     if (msg.type === 'RESUME_TIMER') {
-      console.log('🟢 [JudgePage] Applying RESUME_TIMER');
+      debugLog('🟢 [JudgePage] Applying RESUME_TIMER');
       setTimerState("running");
     }
     if (msg.type === 'PROGRESS_UPDATE') {
-      console.log('🟢 [JudgePage] Applying PROGRESS_UPDATE:', msg);
+      debugLog('🟢 [JudgePage] Applying PROGRESS_UPDATE:', msg);
       // Prefer authoritative count if provided; otherwise apply delta
       if (typeof msg.holdCount === 'number') {
         setHoldCount(msg.holdCount);
@@ -152,31 +152,31 @@ const JudgePage = () => {
       }
     }
     if (msg.type === 'SUBMIT_SCORE') {
-      console.log('🟢 [JudgePage] Applying SUBMIT_SCORE');
+      debugLog('🟢 [JudgePage] Applying SUBMIT_SCORE');
       setTimerState("idle");
       setUsedHalfHold(false);
       setHoldCount(0);
       clearRegisteredTime();
     }
     if (msg.type === 'REGISTER_TIME') {
-      console.log('🟢 [JudgePage] Applying REGISTER_TIME:', msg.registeredTime);
+      debugLog('🟢 [JudgePage] Applying REGISTER_TIME:', msg.registeredTime);
       if (typeof msg.registeredTime === "number") {
         setRegisteredTime(msg.registeredTime);
         try {
           localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
         } catch (err) {
-          console.error("Failed to persist registered time from WS", err);
+          debugError("Failed to persist registered time from WS", err);
         }
       }
     }
     if (msg.type === 'STATE_SNAPSHOT') {
-      console.log('🟢 [JudgePage] Applying STATE_SNAPSHOT:', msg);
+      debugLog('🟢 [JudgePage] Applying STATE_SNAPSHOT:', msg);
       
       // Clear fallback timeout since snapshot arrived
       if (snapshotTimeoutRef.current) {
         clearTimeout(snapshotTimeoutRef.current);
         snapshotTimeoutRef.current = null;
-        console.log('📗 [JudgePage] Cleared fallback timeout (STATE_SNAPSHOT received)');
+        debugLog('📗 [JudgePage] Cleared fallback timeout (STATE_SNAPSHOT received)');
       }
       
       // Always apply snapshot so Judge reflects backend immediately
@@ -192,7 +192,7 @@ const JudgePage = () => {
         try {
           localStorage.setItem(`registeredTime-${idx}`, msg.registeredTime.toString());
         } catch (err) {
-          console.error("Failed to persist registered time from snapshot", err);
+          debugError("Failed to persist registered time from snapshot", err);
         }
       }
       if (typeof msg.remaining === "number") {
@@ -205,45 +205,44 @@ const JudgePage = () => {
       }
     }
     if (msg.type === 'ACTIVE_CLIMBER') {
-      console.log('🟢 [JudgePage] Applying ACTIVE_CLIMBER:', msg.competitor);
+      debugLog('🟢 [JudgePage] Applying ACTIVE_CLIMBER:', msg.competitor);
       setCurrentClimber(msg.competitor || '');
     }
   }, [idx, applyTimerPresetSnapshot, clearRegisteredTime]);
 
   // Initialize WebSocket hook at top level with memoized URL
-  console.log('🟡 [JudgePage] About to call useWebSocketWithHeartbeat with wsUrl:', WS_URL);
-  const { ws, connected } = useWebSocketWithHeartbeat(WS_URL, (m) => {
-    console.log('🟢 [JudgePage] WS message received:', m.type);
+  debugLog('🟡 [JudgePage] About to call useWebSocketWithHeartbeat with wsUrl:', WS_URL);
+  const { ws, connected, wsError } = useWebSocketWithHeartbeat(WS_URL, (m) => {
+    debugLog('🟢 [JudgePage] WS message received:', m.type);
     handleWsMessage(m);
   });
-  console.log('🟡 [JudgePage] Hook returned, connected:', connected, 'ws:', ws ? 'exists' : 'null');
+  debugLog('🟡 [JudgePage] Hook returned, connected:', connected, 'ws:', ws ? 'exists' : 'null');
   // Track WS open/close to update banner and trigger resync
   useEffect(() => {
     if (!ws) return;
     const handleOpen = () => {
-      console.log('📗 [JudgePage ws effect] handleOpen called, syncing state from server');
+      debugLog('📗 [JudgePage ws effect] handleOpen called, syncing state from server');
       setWsStatus("open");
-      setWsError("");
       
       // NEW: Force explicit STATE_SNAPSHOT request via WebSocket
       if (ws.readyState === WebSocket.OPEN) {
-        console.log('📗 [JudgePage] Requesting STATE_SNAPSHOT via WebSocket');
+        debugLog('📗 [JudgePage] Requesting STATE_SNAPSHOT via WebSocket');
         try {
           ws.send(JSON.stringify({ type: 'REQUEST_STATE', boxId: idx }));
         } catch (err) {
-          console.error('📗 [JudgePage] Failed to send REQUEST_STATE:', err);
+          debugError('📗 [JudgePage] Failed to send REQUEST_STATE:', err);
         }
       }
       
       // Fallback: If no STATE_SNAPSHOT arrives in 2s, fetch via HTTP
       snapshotTimeoutRef.current = setTimeout(() => {
-        console.warn('📗 [JudgePage] No STATE_SNAPSHOT received in 2s, fetching via HTTP');
+        debugWarn('📗 [JudgePage] No STATE_SNAPSHOT received in 2s, fetching via HTTP');
         
         fetch(`${API_BASE}/api/state/${idx}`)
           .then(res => res.ok ? res.json() : null)
           .then(st => {
             if (!st) return;
-            console.log('📗 [JudgePage] Applied fallback HTTP state:', st);
+            debugLog('📗 [JudgePage] Applied fallback HTTP state:', st);
             if (st.sessionId) setSessionId(idx, st.sessionId);
             setInitiated(!!st.initiated);
             setMaxScore(st.holdsCount || 0);
@@ -255,14 +254,14 @@ const JudgePage = () => {
             if (typeof st.remaining === "number") setTimerSeconds(st.remaining);
             if (typeof st.timeCriterionEnabled === "boolean") setTimeCriterionEnabled(st.timeCriterionEnabled);
           })
-          .catch(err => console.error('📗 [JudgePage] Failed to fetch fallback state:', err));
+          .catch(err => debugError('📗 [JudgePage] Failed to fetch fallback state:', err));
       }, 2000);
     };
     const handleClose = () => setWsStatus("closed");
     
     // If socket is already open, call handleOpen immediately (in case open event already fired)
     if (ws.readyState === WebSocket.OPEN) {
-      console.log('📗 [JudgePage ws effect] Socket already OPEN (readyState:', ws.readyState, '), calling handleOpen immediately');
+      debugLog('📗 [JudgePage ws effect] Socket already OPEN (readyState:', ws.readyState, '), calling handleOpen immediately');
       handleOpen();
     }
     
@@ -288,7 +287,7 @@ const JudgePage = () => {
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === `boxVersion-${idx}` && e.newValue !== e.oldValue) {
-        console.log(`📦 boxVersion-${idx} changed from ${e.oldValue} to ${e.newValue}, refreshing Judge state...`);
+        debugLog(`📦 boxVersion-${idx} changed from ${e.oldValue} to ${e.newValue}, refreshing Judge state...`);
         // Re-fetch state from server to sync with new version
         (async () => {
           try {
@@ -303,7 +302,7 @@ const JudgePage = () => {
               applyTimerPresetSnapshot(st);
             }
           } catch (err) {
-            console.error("Failed to refresh state after boxVersion change", err);
+            debugError("Failed to refresh state after boxVersion change", err);
           }
         })();
       }
@@ -332,7 +331,7 @@ const JudgePage = () => {
           if (typeof st.timeCriterionEnabled === "boolean") setTimeCriterionEnabled(st.timeCriterionEnabled);
         }
       } catch (e) {
-        console.error("Error fetching initial state:", e);
+        debugError("Error fetching initial state:", e);
       }
     })();
   }, [idx, API_BASE, applyTimerPresetSnapshot]);
@@ -375,7 +374,6 @@ const JudgePage = () => {
   useEffect(() => {
     if (wsStatus === "open") {
       setShowWsBanner(false);
-      setWsError("");
       return;
     }
     const t = setTimeout(() => setShowWsBanner(true), 800);
@@ -403,7 +401,7 @@ const JudgePage = () => {
         }
       }
     } catch (err) {
-      console.error("Failed to fetch latest state snapshot", err);
+      debugError("Failed to fetch latest state snapshot", err);
     }
     return snapshot;
   };
@@ -469,7 +467,7 @@ const JudgePage = () => {
     try {
       localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
     } catch (err) {
-      console.error("Failed storing registered time", err);
+      debugError("Failed storing registered time", err);
     }
     registerTime(idx, elapsed);
   };
@@ -486,17 +484,13 @@ const JudgePage = () => {
   useEffect(() => {
     if (wsStatus === "open") {
       setShowWsBanner(false);
-      setWsError("");
       return;
     }
     const t = setTimeout(() => {
       setShowWsBanner(true);
-      if (!wsError) {
-        setWsError("WebSocket reconnecting...");
-      }
     }, 1000);
     return () => clearTimeout(t);
-  }, [wsStatus, wsError]);
+  }, [wsStatus]);
 
   return (
     <div className="p-20 flex flex-col gap-2">
@@ -598,7 +592,7 @@ const JudgePage = () => {
                   try {
                     localStorage.setItem(`registeredTime-${idx}`, elapsed.toString());
                   } catch (err) {
-                    console.error("Failed to persist computed registered time", err);
+                    debugError("Failed to persist computed registered time", err);
                   }
                   setRegisteredTime(elapsed);
                 }
@@ -623,5 +617,5 @@ const JudgePage = () => {
   );
 };
 
-console.log('🟡 [JudgePage] File loaded, export:', typeof JudgePage);
+debugLog('🟡 [JudgePage] File loaded, export:', typeof JudgePage);
 export default JudgePage;

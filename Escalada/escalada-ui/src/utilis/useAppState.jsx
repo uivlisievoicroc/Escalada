@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react';
 import { useLocalStorage } from './useLocalStorage';
+import { debugError } from './debug';
 
 /**
  * Centralized App State Context
@@ -205,7 +206,7 @@ export function AppStateProvider({ children }) {
       try {
         bcRef.current.postMessage({ type, payload });
       } catch (err) {
-        console.error('Failed to broadcast state update:', err);
+        debugError('Failed to broadcast state update:', err);
       }
     }
   }, []);
@@ -215,7 +216,7 @@ export function AppStateProvider({ children }) {
       try {
         bcCmdRef.current.postMessage({ boxId, action });
       } catch (err) {
-        console.error('Failed to broadcast command:', err);
+        debugError('Failed to broadcast command:', err);
       }
     }
   }, []);
