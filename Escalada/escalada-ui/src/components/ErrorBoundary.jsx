@@ -24,10 +24,10 @@ class ErrorBoundary extends React.Component {
       error,
       errorInfo,
     });
-    
+
     // Log error to console in development
     debugError('Error caught by boundary:', error, errorInfo);
-    
+
     // TODO: Log to error reporting service (Sentry, etc.)
     // logErrorToService(error, errorInfo);
   }
@@ -39,7 +39,8 @@ class ErrorBoundary extends React.Component {
           <div style={styles.content}>
             <h1 style={styles.title}>⚠️ Something went wrong</h1>
             <p style={styles.message}>
-              We're sorry, but something unexpected happened. Please refresh the page or contact support.
+              We're sorry, but something unexpected happened. Please refresh the page or contact
+              support.
             </p>
             {process.env.NODE_ENV === 'development' && (
               <details style={styles.details}>
@@ -51,10 +52,7 @@ class ErrorBoundary extends React.Component {
                 </pre>
               </details>
             )}
-            <button
-              onClick={() => window.location.reload()}
-              style={styles.button}
-            >
+            <button onClick={() => window.location.reload()} style={styles.button}>
               Refresh Page
             </button>
           </div>

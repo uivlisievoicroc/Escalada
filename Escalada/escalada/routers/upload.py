@@ -1,9 +1,11 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-import openpyxl
 from io import BytesIO
 from zipfile import BadZipFile
 
+import openpyxl
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+
 router = APIRouter(tags=["upload"])
+
 
 @router.post("/upload")
 async def upload_listbox(
@@ -11,11 +13,14 @@ async def upload_listbox(
     routesCount: str = Form(...),
     holdsCounts: str = Form(...),
     file: UploadFile = File(...),
-    include_clubs: str = Form(default="true")
+    include_clubs: str = Form(default="true"),
 ):
     """Upload competition data from Excel file."""
     # verific MIME
-    if file.content_type not in ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.ms-excel"):
+    if file.content_type not in (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    ):
         raise HTTPException(status_code=400, detail="Tip fișier neacceptat")
 
     data = await file.read()
@@ -23,7 +28,7 @@ async def upload_listbox(
         wb = openpyxl.load_workbook(filename=BytesIO(data), read_only=True)
     except BadZipFile:
         raise HTTPException(status_code=400, detail="Fișierul încărcat nu este un .xlsx valid")
-    
+
     try:
         ws = wb.active
         if ws is None:
@@ -40,6 +45,7 @@ async def upload_listbox(
 
     # Parse holdsCounts from JSON string
     import json
+
     try:
         holds_counts_list = json.loads(holdsCounts)
     except:
@@ -54,11 +60,7 @@ async def upload_listbox(
         "routeIndex": 1,
         "holdsCount": holds_counts_list[0] if holds_counts_list else 0,
         "initiated": False,
-        "timerPreset": "05:00"
+        "timerPreset": "05:00",
     }
 
-    return {
-        "status": "success",
-        "message": "Listbox uploaded successfully",
-        "listbox": new_listbox
-    }
+    return {"status": "success", "message": "Listbox uploaded successfully", "listbox": new_listbox}

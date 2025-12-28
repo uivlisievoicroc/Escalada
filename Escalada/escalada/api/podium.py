@@ -1,10 +1,12 @@
-from fastapi import APIRouter, HTTPException
-from typing import List, Dict
-from pathlib import Path
-import pandas as pd
 import os
+from pathlib import Path
+from typing import Dict, List
+
+import pandas as pd
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
+
 
 @router.get("/podium/{category}", response_model=List[Dict[str, str]])
 async def get_podium(category: str):
@@ -16,10 +18,12 @@ async def get_podium(category: str):
     safe_category = os.path.basename(category)
     if not safe_category or safe_category != category:
         raise HTTPException(status_code=400, detail="Invalid category name")
-    
+
     excel_path = Path("escalada/clasamente") / safe_category / "overall.xlsx"
     if not excel_path.exists():
-        raise HTTPException(status_code=404, detail="Clasament inexistent pentru categoria specificată.")
+        raise HTTPException(
+            status_code=404, detail="Clasament inexistent pentru categoria specificată."
+        )
     try:
         df = pd.read_excel(excel_path)
     except Exception as e:
@@ -31,6 +35,8 @@ async def get_podium(category: str):
     for idx, row in enumerate(top3.itertuples()):
         name = getattr(row, "Nume", None) or getattr(row, "Name", None)
         if name is None:
-            raise HTTPException(status_code=500, detail="Excel file is missing required 'Nume' or 'Name' column")
+            raise HTTPException(
+                status_code=500, detail="Excel file is missing required 'Nume' or 'Name' column"
+            )
         result.append({"name": name, "color": colors[idx]})
     return result

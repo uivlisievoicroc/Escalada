@@ -26,7 +26,7 @@ global.WebSocket = vi.fn(() => ({
 }));
 
 // Mock BroadcastChannel
-global.BroadcastChannel = vi.fn(function(name) {
+global.BroadcastChannel = vi.fn(function (name) {
   this.name = name;
   this.postMessage = vi.fn();
   this.addEventListener = vi.fn();

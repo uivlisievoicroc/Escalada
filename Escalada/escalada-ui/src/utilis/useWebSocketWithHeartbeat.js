@@ -54,15 +54,22 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
 
         ws.onopen = () => {
           isConnectingRef.current = false;
-          
+
           // Check cleanup state BEFORE processing open event (StrictMode protection)
           if (cleanupCalled) {
             console.debug('[Hook onopen] Cleanup called before open (StrictMode), closing');
             ws.close();
             return;
           }
-          
-          debugLog('🟢 [Hook onopen] TRIGGERED for', url, 'readyState:', ws.readyState, 'timestamp:', new Date().toISOString());
+
+          debugLog(
+            '🟢 [Hook onopen] TRIGGERED for',
+            url,
+            'readyState:',
+            ws.readyState,
+            'timestamp:',
+            new Date().toISOString(),
+          );
           logger.log(`[WebSocket] Connected to ${url}`);
           debugLog('🟢 [Hook onopen] Setting connected=true and wsInstance');
           setConnected(true);
@@ -105,13 +112,13 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
         ws.onclose = () => {
           isConnectingRef.current = false;
           debugLog('🔌 [Hook onclose] CLOSED for', url, 'timestamp:', new Date().toISOString());
-          
+
           // Check cleanup state before reconnecting
           if (cleanupCalled) {
             console.debug('[Hook onclose] Component unmounted or cleanup called, not reconnecting');
             return;
           }
-          
+
           logger.log(`[WebSocket] Disconnected from ${url}`);
           setConnected(false);
           setWsInstance(null);
@@ -130,22 +137,33 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
           // Exponential backoff: 1s, 2s, 4s, ... max 30s
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current || 0), 30000);
           reconnectAttemptsRef.current = (reconnectAttemptsRef.current || 0) + 1;
-          debugLog(`🔄 [Hook onclose] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
-          logger.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+          debugLog(
+            `🔄 [Hook onclose] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`,
+          );
+          logger.log(
+            `[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`,
+          );
           reconnectTimeoutId = setTimeout(connect, delay);
         };
 
         ws.onerror = (event) => {
           isConnectingRef.current = false;
-          
+
           // Suppress expected error after cleanup (StrictMode double-mount)
           // When cleanup is called before socket opens, this error is expected and not actionable
           if (cleanupCalled && reconnectAttemptsRef.current === 0) {
             logger.debug('[Hook onerror] Suppressing expected StrictMode error during cleanup');
             return;
           }
-          
-          debugError('🔴 [Hook onerror] ERROR for', url, 'event:', event, 'timestamp:', new Date().toISOString());
+
+          debugError(
+            '🔴 [Hook onerror] ERROR for',
+            url,
+            'event:',
+            event,
+            'timestamp:',
+            new Date().toISOString(),
+          );
           logger.error('[WebSocket] Error:', event);
         };
 
@@ -160,7 +178,7 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
 
     return () => {
       cleanupCalled = true; // Mark cleanup as executed FIRST to prevent race conditions
-      
+
       // Invalidate this generation so late events are ignored
       if (currentGen === generationRef.current) {
         generationRef.current += 1;
@@ -189,7 +207,9 @@ export function useWebSocketWithHeartbeat(url, onMessage) {
     reconnect: () => {
       // Force reconnect by closing existing socket; connect loop will re-open
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        try { wsRef.current.close(); } catch {}
+        try {
+          wsRef.current.close();
+        } catch {}
       }
     },
     send: (msg) => {

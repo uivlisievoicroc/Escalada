@@ -1,5 +1,5 @@
 import { debugError } from './debug';
-import { safeSetItem } from './storage';
+import { safeSetItem, safeGetItem } from './storage';
 import { fetchWithRetry } from './fetch';
 
 // src/utilis/contestActions.js
@@ -12,13 +12,13 @@ const API = `${API_PROTOCOL}://${window.location.hostname}:8000/api/cmd`;
 // ==================== SESSION ID & VERSION HELPERS ====================
 
 const getBoxVersion = (boxId) => {
-  const raw = localStorage.getItem(`boxVersion-${boxId}`);
+  const raw = safeGetItem(`boxVersion-${boxId}`);
   const parsed = raw ? parseInt(raw, 10) : null;
   return Number.isNaN(parsed) ? undefined : parsed;
 };
 
 const getSessionId = (boxId) => {
-  return localStorage.getItem(`sessionId-${boxId}`);
+  return safeGetItem(`sessionId-${boxId}`);
 };
 
 const setSessionId = (boxId, sessionId) => {
@@ -52,9 +52,7 @@ const getErrorMessage = async (response) => {
 const validateResponse = async (response, commandType) => {
   if (!response.ok) {
     const errorMsg = await getErrorMessage(response);
-    const error = new Error(
-      `[${commandType}] ${errorMsg}`
-    );
+    const error = new Error(`[${commandType}] ${errorMsg}`);
     error.status = response.status;
     error.commandType = commandType;
     debugError(`Command failed: ${commandType}`, error);
@@ -71,10 +69,7 @@ const validateResponse = async (response, commandType) => {
  */
 export async function startTimer(boxId) {
   try {
-    safeSetItem(
-      'timer-cmd',
-      JSON.stringify({ type: 'START_TIMER', boxId, ts: Date.now() })
-    );
+    safeSetItem('timer-cmd', JSON.stringify({ type: 'START_TIMER', boxId, ts: Date.now() }));
   } catch (err) {
     debugError('Failed to persist START_TIMER command', err);
   }
@@ -93,7 +88,7 @@ export async function startTimer(boxId) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'START_TIMER');
@@ -111,10 +106,7 @@ export async function startTimer(boxId) {
  */
 export async function stopTimer(boxId) {
   try {
-    safeSetItem(
-      'timer-cmd',
-      JSON.stringify({ type: 'STOP_TIMER', boxId, ts: Date.now() })
-    );
+    safeSetItem('timer-cmd', JSON.stringify({ type: 'STOP_TIMER', boxId, ts: Date.now() }));
   } catch (err) {
     debugError('Failed to persist STOP_TIMER command', err);
   }
@@ -133,7 +125,7 @@ export async function stopTimer(boxId) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'STOP_TIMER');
@@ -151,10 +143,7 @@ export async function stopTimer(boxId) {
  */
 export async function resumeTimer(boxId) {
   try {
-    safeSetItem(
-      'timer-cmd',
-      JSON.stringify({ type: 'RESUME_TIMER', boxId, ts: Date.now() })
-    );
+    safeSetItem('timer-cmd', JSON.stringify({ type: 'RESUME_TIMER', boxId, ts: Date.now() }));
   } catch (err) {
     debugError('Failed to persist RESUME_TIMER command', err);
   }
@@ -173,7 +162,7 @@ export async function resumeTimer(boxId) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'RESUME_TIMER');
@@ -206,7 +195,7 @@ export async function updateProgress(boxId, delta = 1) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'PROGRESS_UPDATE');
@@ -237,7 +226,7 @@ export async function requestActiveCompetitor(boxId) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'REQUEST_ACTIVE_COMPETITOR');
@@ -268,14 +257,13 @@ export async function submitScore(boxId, score, competitor, registeredTime) {
           type: 'SUBMIT_SCORE',
           score,
           competitor,
-          registeredTime:
-            typeof registeredTime === 'number' ? registeredTime : undefined,
+          registeredTime: typeof registeredTime === 'number' ? registeredTime : undefined,
           sessionId: getSessionId(boxId),
           boxVersion: getBoxVersion(boxId),
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'SUBMIT_SCORE');
@@ -308,7 +296,7 @@ export async function registerTime(boxId, registeredTime) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'REGISTER_TIME');
@@ -328,13 +316,7 @@ export async function registerTime(boxId, registeredTime) {
  * @param {string} timerPreset - Timer preset (MM:SS)
  * @throws {Error} If API request fails
  */
-export async function initRoute(
-  boxId,
-  routeIndex,
-  holdsCount,
-  competitors,
-  timerPreset
-) {
+export async function initRoute(boxId, routeIndex, holdsCount, competitors, timerPreset) {
   try {
     const response = await fetchWithRetry(
       API,
@@ -352,7 +334,7 @@ export async function initRoute(
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'INIT_ROUTE');
@@ -382,7 +364,7 @@ export async function requestState(boxId) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'REQUEST_STATE');
@@ -412,7 +394,7 @@ export async function resetBox(boxId) {
         }),
       },
       3,
-      5000
+      5000,
     );
 
     await validateResponse(response, 'RESET_BOX');

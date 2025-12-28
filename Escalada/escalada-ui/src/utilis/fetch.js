@@ -21,10 +21,7 @@ export const fetchWithTimeout = (url, options = {}, timeout = 5000) => {
   return Promise.race([
     fetch(url, options),
     new Promise((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Request timeout after ${timeout}ms`)),
-        timeout
-      )
+      setTimeout(() => reject(new Error(`Request timeout after ${timeout}ms`)), timeout),
     ),
   ]);
 };
@@ -62,12 +59,7 @@ export const fetchWithTimeout = (url, options = {}, timeout = 5000) => {
  *   console.error('All retries failed:', err.message);
  * }
  */
-export const fetchWithRetry = async (
-  url,
-  options = {},
-  retries = 3,
-  timeout = 5000
-) => {
+export const fetchWithRetry = async (url, options = {}, retries = 3, timeout = 5000) => {
   let lastError = null;
 
   for (let i = 0; i < retries; i++) {
@@ -81,9 +73,7 @@ export const fetchWithRetry = async (
 
       // Client error (4xx) - don't retry
       if (response.status < 500) {
-        debugWarn(
-          `[fetchWithRetry] Client error ${response.status}, not retrying`
-        );
+        debugWarn(`[fetchWithRetry] Client error ${response.status}, not retrying`);
         return response;
       }
 
@@ -91,7 +81,7 @@ export const fetchWithRetry = async (
       if (i < retries - 1) {
         const delay = 1000 * Math.pow(2, i); // 1s, 2s, 4s
         debugWarn(
-          `[fetchWithRetry] Server error ${response.status}, retrying in ${delay}ms (attempt ${i + 1}/${retries})`
+          `[fetchWithRetry] Server error ${response.status}, retrying in ${delay}ms (attempt ${i + 1}/${retries})`,
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
@@ -104,17 +94,14 @@ export const fetchWithRetry = async (
 
       // Last attempt - throw error
       if (i === retries - 1) {
-        debugError(
-          `[fetchWithRetry] All ${retries} attempts failed:`,
-          err.message
-        );
+        debugError(`[fetchWithRetry] All ${retries} attempts failed:`, err.message);
         throw err;
       }
 
       // Retry with backoff
       const delay = 1000 * Math.pow(2, i);
       debugWarn(
-        `[fetchWithRetry] Network error (${err.message}), retrying in ${delay}ms (attempt ${i + 1}/${retries})`
+        `[fetchWithRetry] Network error (${err.message}), retrying in ${delay}ms (attempt ${i + 1}/${retries})`,
       );
       await new Promise((resolve) => setTimeout(resolve, delay));
     }

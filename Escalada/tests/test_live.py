@@ -92,7 +92,8 @@ class TimerCommandsTest(BaseTestCase):
     def test_start_timer(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="START_TIMER"))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="START_TIMER", sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertTrue(state["started"])
@@ -101,8 +102,9 @@ class TimerCommandsTest(BaseTestCase):
     def test_stop_timer(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="START_TIMER"))
-            await cmd(Cmd(boxId=1, type="STOP_TIMER"))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="START_TIMER", sessionId=sid))
+            await cmd(Cmd(boxId=1, type="STOP_TIMER", sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertFalse(state["started"])
@@ -111,9 +113,10 @@ class TimerCommandsTest(BaseTestCase):
     def test_resume_timer(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="START_TIMER"))
-            await cmd(Cmd(boxId=1, type="STOP_TIMER"))
-            await cmd(Cmd(boxId=1, type="RESUME_TIMER"))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="START_TIMER", sessionId=sid))
+            await cmd(Cmd(boxId=1, type="STOP_TIMER", sessionId=sid))
+            await cmd(Cmd(boxId=1, type="RESUME_TIMER", sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertTrue(state["started"])
@@ -121,7 +124,8 @@ class TimerCommandsTest(BaseTestCase):
     def test_timer_sync(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="TIMER_SYNC", remaining=45.5))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="TIMER_SYNC", remaining=45.5, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["remaining"], 45.5)
@@ -136,8 +140,9 @@ class ProgressUpdateTest(BaseTestCase):
     def test_progress_update_increment(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1, sessionId=sid))
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["holdCount"], 2)
@@ -145,8 +150,9 @@ class ProgressUpdateTest(BaseTestCase):
     def test_progress_update_half_hold(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=0.5))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1, sessionId=sid))
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=0.5, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["holdCount"], 1.5)
@@ -154,8 +160,9 @@ class ProgressUpdateTest(BaseTestCase):
     def test_progress_update_negative(self)  :
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=5))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=-2))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=5, sessionId=sid))
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=-2, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["holdCount"], 3.0)
@@ -170,7 +177,8 @@ class RegisterTimeTest(BaseTestCase):
     def test_register_time(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=15.5))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=15.5, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["lastRegisteredTime"], 15.5)
@@ -178,7 +186,8 @@ class RegisterTimeTest(BaseTestCase):
     def test_register_time_zero(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=0))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=0, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["lastRegisteredTime"], 0)
@@ -186,8 +195,9 @@ class RegisterTimeTest(BaseTestCase):
     def test_register_time_none_ignored(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=10))
-            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=None))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=10, sessionId=sid))
+            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=None, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["lastRegisteredTime"], 10)
@@ -210,7 +220,8 @@ class SubmitScoreTimeFallbackTest(BaseTestCase):
                     competitors=[{"nume": "Alex", "marked": False}],
                 )
             )
-            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=12))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="REGISTER_TIME", registeredTime=12, sessionId=sid))
             await cmd(
                 Cmd(
                     boxId=1,
@@ -218,6 +229,7 @@ class SubmitScoreTimeFallbackTest(BaseTestCase):
                     score=5,
                     competitor="Alex",
                     registeredTime=None,
+                    sessionId=sid,
                 )
             )
 
@@ -227,7 +239,8 @@ class SubmitScoreTimeFallbackTest(BaseTestCase):
     def test_submit_score_marks_competitor(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex", "marked": False}, {"nume": "Bob", "marked": False}]))
-            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitor="Alex", score=8, registeredTime=12.0))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitor="Alex", score=8, registeredTime=12.0, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertTrue(state["competitors"][0]["marked"])
@@ -236,7 +249,8 @@ class SubmitScoreTimeFallbackTest(BaseTestCase):
     def test_submit_score_invalid_competitor(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex", "marked": False}]))
-            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitor="NonExistent", score=8, registeredTime=10))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitor="NonExistent", score=8, registeredTime=10, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertEqual(state["currentClimber"], "Alex")
@@ -244,9 +258,10 @@ class SubmitScoreTimeFallbackTest(BaseTestCase):
     def test_submit_score_reset_timer(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            await cmd(Cmd(boxId=1, type="START_TIMER"))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=5))
-            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitor="Alex", score=5, registeredTime=10))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="START_TIMER", sessionId=sid))
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=5, sessionId=sid))
+            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitor="Alex", score=5, registeredTime=10, sessionId=sid))
             return state_map[1]
         state = asyncio.run(scenario())
         self.assertFalse(state["started"])
@@ -275,8 +290,10 @@ class MultiBoxTest(BaseTestCase):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
             await cmd(Cmd(boxId=2, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Bob"}]))
-            await cmd(Cmd(boxId=1, type="START_TIMER"))
-            await cmd(Cmd(boxId=2, type="STOP_TIMER"))
+            sid1 = state_map[1]["sessionId"]
+            sid2 = state_map[2]["sessionId"]
+            await cmd(Cmd(boxId=1, type="START_TIMER", sessionId=sid1))
+            await cmd(Cmd(boxId=2, type="STOP_TIMER", sessionId=sid2))
             return (state_map[1], state_map[2])
         state1, state2 = asyncio.run(scenario())
         self.assertTrue(state1["started"])
@@ -292,7 +309,8 @@ class RequestStateTest(BaseTestCase):
     def test_request_state(self):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", routeIndex=1, holdsCount=10, competitors=[{"nume": "Alex"}]))
-            result = await cmd(Cmd(boxId=1, type="REQUEST_STATE"))
+            sid = state_map[1]["sessionId"]
+            result = await cmd(Cmd(boxId=1, type="REQUEST_STATE", sessionId=sid))
             return result
         result = asyncio.run(scenario())
         self.assertEqual(result["status"], "ok")
@@ -342,7 +360,10 @@ class ExceptionHandlingTest(BaseTestCase):
     def test_invalid_command_type(self):
         """Test handling of invalid command type"""
         async def scenario():
-            result = await cmd(Cmd(boxId=1, type="INVALID_COMMAND"))
+            # Ensure state exists to provide a sessionId
+            await cmd(Cmd(boxId=1, type="INIT_ROUTE", timerPreset="3:00", competitors=[]))
+            sid = state_map[1]["sessionId"]
+            result = await cmd(Cmd(boxId=1, type="INVALID_COMMAND", sessionId=sid))
             # Should handle gracefully without crashing
             return state_map.get(1)
         
@@ -368,10 +389,11 @@ class ExceptionHandlingTest(BaseTestCase):
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", timerPreset="3:00", competitors=[]))
             
             # Run concurrent operations on same box
+            sid = state_map[1]["sessionId"]
             tasks = [
-                cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1)),
-                cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1)),
-                cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1)),
+                cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1, sessionId=sid)),
+                cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1, sessionId=sid)),
+                cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1, sessionId=sid)),
             ]
             await asyncio.gather(*tasks)
             
@@ -386,7 +408,8 @@ class ExceptionHandlingTest(BaseTestCase):
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", timerPreset="3:00", competitors=[{"nume": "Alice"}, {"nume": "Bob"}]))
             # Try to submit for invalid index
-            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitorIdx=999))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitorIdx=999, sessionId=sid))
             return state_map[1]
         
         state = asyncio.run(scenario())
@@ -397,7 +420,8 @@ class ExceptionHandlingTest(BaseTestCase):
         """Test register time with negative value"""
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", timerPreset="3:00", competitors=[{"nume": "Alice"}]))
-            await cmd(Cmd(boxId=1, type="REGISTER_TIME", competitorIdx=0, time=-10))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="REGISTER_TIME", competitorIdx=0, time=-10, sessionId=sid))
             return state_map[1]
         
         state = asyncio.run(scenario())
@@ -407,9 +431,11 @@ class ExceptionHandlingTest(BaseTestCase):
     def test_timer_operations_without_init(self):
         """Test timer commands on uninitialized box"""
         async def scenario():
-            # Try timer commands without INIT_ROUTE
-            await cmd(Cmd(boxId=999, type="START_TIMER"))
-            await cmd(Cmd(boxId=999, type="STOP_TIMER"))
+            # Initialize to obtain sessionId before timer operations
+            await cmd(Cmd(boxId=999, type="INIT_ROUTE", timerPreset="3:00", competitors=[]))
+            sid = state_map[999]["sessionId"]
+            await cmd(Cmd(boxId=999, type="START_TIMER", sessionId=sid))
+            await cmd(Cmd(boxId=999, type="STOP_TIMER", sessionId=sid))
             return state_map.get(999)
         
         state = asyncio.run(scenario())
@@ -420,8 +446,9 @@ class ExceptionHandlingTest(BaseTestCase):
         """Test progress update with extreme delta values"""
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", timerPreset="3:00", competitors=[]))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1000))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=-1000))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1000, sessionId=sid))
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=-1000, sessionId=sid))
             return state_map[1]
         
         state = asyncio.run(scenario())
@@ -440,8 +467,9 @@ class StateConsistencyTest(BaseTestCase):
         """Test that route state persists after score submission"""
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", timerPreset="3:00", competitors=[{"nume": "Alice"}, {"nume": "Bob"}]))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=5))
-            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitorIdx=0))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=5, sessionId=sid))
+            await cmd(Cmd(boxId=1, type="SUBMIT_SCORE", competitorIdx=0, sessionId=sid))
             return state_map[1]
         
         state = asyncio.run(scenario())
@@ -459,9 +487,12 @@ class StateConsistencyTest(BaseTestCase):
             await cmd(Cmd(boxId=3, type="INIT_ROUTE", timerPreset="5:00", competitors=[{"nume": "C"}]))
             
             # Modify each independently
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1))
-            await cmd(Cmd(boxId=2, type="PROGRESS_UPDATE", delta=2))
-            await cmd(Cmd(boxId=3, type="PROGRESS_UPDATE", delta=3))
+            sid1 = state_map[1]["sessionId"]
+            sid2 = state_map[2]["sessionId"]
+            sid3 = state_map[3]["sessionId"]
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=1, sessionId=sid1))
+            await cmd(Cmd(boxId=2, type="PROGRESS_UPDATE", delta=2, sessionId=sid2))
+            await cmd(Cmd(boxId=3, type="PROGRESS_UPDATE", delta=3, sessionId=sid3))
             
             return {
                 "box1": state_map[1],
@@ -478,8 +509,9 @@ class StateConsistencyTest(BaseTestCase):
         """Test REQUEST_STATE returns exact current state"""
         async def scenario():
             await cmd(Cmd(boxId=1, type="INIT_ROUTE", timerPreset="3:00", competitors=[{"nume": "Alice"}]))
-            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=7))
-            result = await cmd(Cmd(boxId=1, type="REQUEST_STATE"))
+            sid = state_map[1]["sessionId"]
+            await cmd(Cmd(boxId=1, type="PROGRESS_UPDATE", delta=7, sessionId=sid))
+            result = await cmd(Cmd(boxId=1, type="REQUEST_STATE", sessionId=sid))
             return result
         
         result = asyncio.run(scenario())

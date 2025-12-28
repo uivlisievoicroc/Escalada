@@ -34,19 +34,20 @@ class SimulationSixBoxesTest(unittest.TestCase):
                 timerPreset="05:00",
                 categorie=f"Cat_{box_id}"
             ))
+            sid = state_map[box_id]["sessionId"]
 
             # START timer, make progress, half-hold, STOP
-            await cmd(Cmd(boxId=box_id, type="START_TIMER"))
-            await cmd(Cmd(boxId=box_id, type="PROGRESS_UPDATE", delta=1))
-            await cmd(Cmd(boxId=box_id, type="PROGRESS_UPDATE", delta=0.1))
-            await cmd(Cmd(boxId=box_id, type="STOP_TIMER"))
+            await cmd(Cmd(boxId=box_id, type="START_TIMER", sessionId=sid))
+            await cmd(Cmd(boxId=box_id, type="PROGRESS_UPDATE", delta=1, sessionId=sid))
+            await cmd(Cmd(boxId=box_id, type="PROGRESS_UPDATE", delta=0.1, sessionId=sid))
+            await cmd(Cmd(boxId=box_id, type="STOP_TIMER", sessionId=sid))
 
             # Register time and submit score for first competitor
-            await cmd(Cmd(boxId=box_id, type="REGISTER_TIME", registeredTime=12.0))
-            await cmd(Cmd(boxId=box_id, type="SUBMIT_SCORE", competitor=f"CompetitorA_{box_id}", score=1.1, registeredTime=None))
+            await cmd(Cmd(boxId=box_id, type="REGISTER_TIME", registeredTime=12.0, sessionId=sid))
+            await cmd(Cmd(boxId=box_id, type="SUBMIT_SCORE", competitor=f"CompetitorA_{box_id}", score=1.1, registeredTime=None, sessionId=sid))
 
             # Request state snapshot (ensure API path works)
-            result = await cmd(Cmd(boxId=box_id, type="REQUEST_STATE"))
+            result = await cmd(Cmd(boxId=box_id, type="REQUEST_STATE", sessionId=sid))
             return result
 
         async def scenario():

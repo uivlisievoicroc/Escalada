@@ -1,12 +1,39 @@
-# React + Vite
+# Escalada Frontend (React + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Frontend UI for the Escalada real-time climbing competition system.
 
-Currently, two official plugins are available:
+## Quick Start
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+cd Escalada/escalada-ui
+npm install
+npm run dev
+```
 
-## Expanding the ESLint configuration
+## Tests
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+cd Escalada/escalada-ui
+npm test -- --run
+# E2E
+npx playwright test --reporter=list
+```
+
+## Formatting & Hooks
+
+- Frontend formatting is enforced with Prettier via Husky + lint-staged.
+- On commit, staged files in `src/` are automatically formatted.
+
+Manual format:
+
+```bash
+cd Escalada/escalada-ui
+npm run format
+```
+
+Hook location:
+
+- `.husky/pre-commit` (repo root) runs `npx lint-staged` inside `Escalada/escalada-ui`.
+
+Backend Python files are formatted via Black/isort using `pre-commit`.
+See the backend README for details.

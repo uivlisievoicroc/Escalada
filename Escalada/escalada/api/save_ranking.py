@@ -1,17 +1,18 @@
 # escalada/api/save_ranking.py
+import math
+import os
+from pathlib import Path
+
+import pandas as pd
 from fastapi import APIRouter
 from pydantic import BaseModel
-from pathlib import Path
-import pandas as pd
-import math
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle, Spacer
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-import os
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 # Register Unicode-capable font for diacritics
 # Try DejaVuSans first, then fallback to reportlab's built-in UnicodeCIDFont
@@ -30,15 +31,19 @@ try:
             pdfmetrics.registerFont(TTFont("DejaVuSans", path))
             DEFAULT_FONT = "DejaVuSans"
             break
-    
+
     # If DejaVuSans not found, use Helvetica (limited diacritics)
     # Note: Helvetica may not render all Romanian diacritics correctly
 except Exception as e:
     import logging
-    logging.warning(f"Could not register DejaVuSans font: {e}. Using Helvetica (limited diacritic support).")
+
+    logging.warning(
+        f"Could not register DejaVuSans font: {e}. Using Helvetica (limited diacritic support)."
+    )
     DEFAULT_FONT = "Helvetica"
 
 router = APIRouter()
+
 
 class RankingIn(BaseModel):
     categorie: str
@@ -50,16 +55,14 @@ class RankingIn(BaseModel):
     times: dict[str, list[float | None]] | None = None
     use_time_tiebreak: bool = False
 
+
 @router.post("/save_ranking")
 def save_ranking(payload: RankingIn):
     cat_dir = Path("escalada/clasamente") / payload.categorie
     cat_dir.mkdir(parents=True, exist_ok=True)
     raw_times = payload.times or {}
     # normalize toate timpiile la secunde (int) sau None
-    times = {
-        name: [_to_seconds(t) for t in arr]
-        for name, arr in raw_times.items()
-    }
+    times = {name: [_to_seconds(t) for t in arr] for name, arr in raw_times.items()}
     use_time = payload.use_time_tiebreak
 
     def time_for(name: str, idx: int):
@@ -69,7 +72,7 @@ def save_ranking(payload: RankingIn):
     # ---------- excel + pdf TOTAL ----------
     overall_df = _build_overall_df(payload, times)
     xlsx_tot = cat_dir / "overall.xlsx"
-    pdf_tot  = cat_dir / "overall.pdf"
+    pdf_tot = cat_dir / "overall.pdf"
     overall_df.to_excel(xlsx_tot, index=False)
     _df_to_pdf(overall_df, pdf_tot, title=f"{payload.categorie} – Overall")
     saved_paths = [xlsx_tot, pdf_tot]
@@ -87,8 +90,8 @@ def save_ranking(payload: RankingIn):
             route_list,
             key=lambda x: (
                 -x[1] if x[1] is not None else math.inf,
-                x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0)
-            )
+                x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0),
+            ),
         )
 
         # 3. calculează punctajele de ranking cu tie-handling
@@ -100,10 +103,7 @@ def save_ranking(payload: RankingIn):
                 route_list_sorted[j]
                 for j in range(i, len(route_list_sorted))
                 if route_list_sorted[j][1] == route_list_sorted[i][1]
-                and (
-                    not use_time
-                    or (route_list_sorted[j][2] == route_list_sorted[i][2])
-                )
+                and (not use_time or (route_list_sorted[j][2] == route_list_sorted[i][2]))
             ]
             first = pos
             last = pos + len(same_score) - 1
@@ -112,7 +112,7 @@ def save_ranking(payload: RankingIn):
                 points[name] = avg_rank
             pos += len(same_score)
             i += len(same_score)
-        
+
         # tie-handling pe Score per rută
         ranks = []
         prev_score = None
@@ -128,17 +128,19 @@ def save_ranking(payload: RankingIn):
             prev_time = tm
             prev_rank = rank
 
-        df_route = pd.DataFrame([
-            {
-                "Rank": ranks[i],
-                "Name": name,
-                "Club": payload.clubs.get(name, ""),
-                "Score": score,
-                **({"Time": _format_time(tm)} if use_time else {}),
-                "Points": points.get(name)
-            }
-            for i, (name, score, tm) in enumerate(route_list_sorted)
-        ])
+        df_route = pd.DataFrame(
+            [
+                {
+                    "Rank": ranks[i],
+                    "Name": name,
+                    "Club": payload.clubs.get(name, ""),
+                    "Score": score,
+                    **({"Time": _format_time(tm)} if use_time else {}),
+                    "Points": points.get(name),
+                }
+                for i, (name, score, tm) in enumerate(route_list_sorted)
+            ]
+        )
 
         # 5. salvează Excel și PDF pentru această rută
         xlsx_route = cat_dir / f"route_{r+1}.xlsx"
@@ -151,7 +153,9 @@ def save_ranking(payload: RankingIn):
 
 
 # ------- helpers -------
-def _build_overall_df(p: RankingIn, normalized_times: dict[str, list[int | None]] | None = None) -> pd.DataFrame:
+def _build_overall_df(
+    p: RankingIn, normalized_times: dict[str, list[int | None]] | None = None
+) -> pd.DataFrame:
     from math import prod
 
     scores = p.scores
@@ -176,7 +180,7 @@ def _build_overall_df(p: RankingIn, normalized_times: dict[str, list[int | None]
             scored.sort(
                 key=lambda x: (
                     -x[1],
-                    x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0)
+                    x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0),
                 )
             )
 
@@ -188,10 +192,7 @@ def _build_overall_df(p: RankingIn, normalized_times: dict[str, list[int | None]
                 while (
                     i + len(same) < len(scored)
                     and scored[i][1] == scored[i + len(same)][1]
-                    and (
-                        not use_time
-                        or scored[i + len(same)][2] == current[2]
-                    )
+                    and (not use_time or scored[i + len(same)][2] == current[2])
                 ):
                     same.append(scored[i + len(same)])
                 avg = (pos + pos + len(same) - 1) / 2
@@ -235,6 +236,7 @@ def _build_overall_df(p: RankingIn, normalized_times: dict[str, list[int | None]
         prev_rank = rank
     df.insert(0, "Rank", ranks)
     return df
+
 
 def _build_by_route_df(p: RankingIn) -> pd.DataFrame:
     rows = []
@@ -281,6 +283,7 @@ def _to_seconds(val) -> int | None:
     except Exception:
         return None
 
+
 def _df_to_pdf(df: pd.DataFrame, pdf_path: Path, title="Ranking"):
     # Create document with margins and landscape A4
     doc = SimpleDocTemplate(
@@ -295,9 +298,9 @@ def _df_to_pdf(df: pd.DataFrame, pdf_path: Path, title="Ranking"):
     # Styles for title
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
-        'TitleStyle',
-        parent=styles['Heading1'],
-        alignment=1,        # center
+        "TitleStyle",
+        parent=styles["Heading1"],
+        alignment=1,  # center
         fontSize=18,
         fontName=DEFAULT_FONT,
         spaceAfter=12,
@@ -307,21 +310,23 @@ def _df_to_pdf(df: pd.DataFrame, pdf_path: Path, title="Ranking"):
     data = [df.columns.tolist()] + df.astype(str).values.tolist()
 
     # Create table
-    table = Table(data, hAlign='CENTER')
+    table = Table(data, hAlign="CENTER")
     # Table styling
-    tbl_style = TableStyle([
-        ('FONTNAME', (0, 0), (-1, 0), DEFAULT_FONT),
-        ('FONTNAME', (0, 1), (-1, -1), DEFAULT_FONT),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4F81BD')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-    ])
+    tbl_style = TableStyle(
+        [
+            ("FONTNAME", (0, 0), (-1, 0), DEFAULT_FONT),
+            ("FONTNAME", (0, 1), (-1, -1), DEFAULT_FONT),
+            ("FONTSIZE", (0, 0), (-1, 0), 12),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F81BD")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ]
+    )
     # Alternate row background colors
     for i in range(1, len(data)):
         bg_color = colors.whitesmoke if i % 2 == 0 else colors.lightgrey
-        tbl_style.add('BACKGROUND', (0, i), (-1, i), bg_color)
+        tbl_style.add("BACKGROUND", (0, i), (-1, i), bg_color)
 
     table.setStyle(tbl_style)
 

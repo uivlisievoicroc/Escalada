@@ -29,9 +29,10 @@ def test_judge_receives_snapshot_and_progress_without_refresh():
         assert msg1["type"] == "STATE_SNAPSHOT"
         assert msg1["initiated"] is True
         assert msg1.get("holdsCount") == 5
+        sid = msg1.get("sessionId")
 
         # Send PROGRESS_UPDATE and expect it on WS
-        r2 = client.post("/api/cmd", json={"boxId": box_id, "type": "PROGRESS_UPDATE", "delta": 1})
+        r2 = client.post("/api/cmd", json={"boxId": box_id, "type": "PROGRESS_UPDATE", "delta": 1, "sessionId": sid})
         assert r2.status_code == 200
 
         # Wait for progress update

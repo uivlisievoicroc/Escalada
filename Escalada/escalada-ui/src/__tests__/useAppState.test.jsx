@@ -15,7 +15,7 @@ describe('AppStateProvider and useAppState Hook', () => {
 
   it('should initialize with default state', () => {
     let capturedState;
-    
+
     function TestComponent() {
       const state = useAppState();
       capturedState = state;
@@ -25,7 +25,7 @@ describe('AppStateProvider and useAppState Hook', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
 
     expect(capturedState.listboxes).toBeDefined();
@@ -48,7 +48,7 @@ describe('AppStateProvider and useAppState Hook', () => {
 
   it('should provide addBox function', () => {
     let capturedState;
-    
+
     function TestComponent() {
       const state = useAppState();
       capturedState = state;
@@ -59,13 +59,13 @@ describe('AppStateProvider and useAppState Hook', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
   });
 
   it('should provide removeBox function', () => {
     let capturedState;
-    
+
     function TestComponent() {
       const state = useAppState();
       capturedState = state;
@@ -76,13 +76,13 @@ describe('AppStateProvider and useAppState Hook', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
   });
 
   it('should provide updateBoxState function', () => {
     let capturedState;
-    
+
     function TestComponent() {
       const state = useAppState();
       capturedState = state;
@@ -93,13 +93,13 @@ describe('AppStateProvider and useAppState Hook', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
   });
 
   it('should provide getBoxState function', () => {
     let capturedState;
-    
+
     function TestComponent() {
       const state = useAppState();
       capturedState = state;
@@ -110,7 +110,7 @@ describe('AppStateProvider and useAppState Hook', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
   });
 });
@@ -118,7 +118,7 @@ describe('AppStateProvider and useAppState Hook', () => {
 describe('useBoxState Hook', () => {
   it('should return box state when available', () => {
     let boxState;
-    
+
     function TestComponent() {
       boxState = useBoxState(1);
       return null;
@@ -127,7 +127,7 @@ describe('useBoxState Hook', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
 
     expect(boxState).toBeDefined();
@@ -135,7 +135,7 @@ describe('useBoxState Hook', () => {
 
   it('should return undefined for non-existent box', () => {
     let boxState;
-    
+
     function TestComponent() {
       boxState = useBoxState(999);
       return null;
@@ -144,7 +144,7 @@ describe('useBoxState Hook', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
 
     expect(boxState).toBeDefined();
@@ -156,9 +156,11 @@ describe('State Persistence', () => {
     function TestComponent() {
       const state = useAppState();
       return (
-        <button onClick={() => {
-          state.addBox({ id: 1, name: 'Test', competitors: [] });
-        }}>
+        <button
+          onClick={() => {
+            state.addBox({ id: 1, name: 'Test', competitors: [] });
+          }}
+        >
           Add Box
         </button>
       );
@@ -167,7 +169,7 @@ describe('State Persistence', () => {
     const { getByText } = render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
 
     act(() => {
@@ -187,7 +189,7 @@ describe('BroadcastChannel Integration', () => {
     render(
       <AppStateProvider>
         <TestComponent />
-      </AppStateProvider>
+      </AppStateProvider>,
     );
 
     // BroadcastChannel constructor should have been called

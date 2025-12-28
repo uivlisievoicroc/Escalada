@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, Dispatch, SetStateAction } from 'react';
+import { safeGetItem, safeSetItem, safeRemoveItem, storageKey } from './storage';
 
 /**
  * Type definitions
@@ -19,12 +20,11 @@ export function useLocalStorage<T>(key: string, initialValue: T): UseLocalStorag
   // State to store our value
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
-      const item = window.localStorage.getItem(key);
-      if (!item) return initialValue;
+      const item = safeGetItem(key);
+      if (item == null) return initialValue;
       try {
         return JSON.parse(item);
       } catch {
-        // fallback: accept plain strings (e.g., "05:00") instead of JSON
         return item as unknown as T;
       }
     } catch (error) {
@@ -40,9 +40,7 @@ export function useLocalStorage<T>(key: string, initialValue: T): UseLocalStorag
       try {
         const valueToStore = value instanceof Function ? value(storedValue) : value;
         setStoredValue(valueToStore);
-        if (window.localStorage) {
-          window.localStorage.setItem(key, JSON.stringify(valueToStore));
-        }
+        safeSetItem(key, JSON.stringify(valueToStore));
       } catch (error) {
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
           console.error(`localStorage quota exceeded for key "${key}"`, error);
@@ -51,13 +49,13 @@ export function useLocalStorage<T>(key: string, initialValue: T): UseLocalStorag
         }
       }
     },
-    [key, storedValue]
+    [key, storedValue],
   );
 
   // Listen for changes in other tabs/windows
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === key && e.newValue) {
+      if ((e.key === storageKey(key) || e.key === key) && e.newValue) {
         try {
           setStoredValue(JSON.parse(e.newValue));
         } catch (error) {
@@ -81,13 +79,13 @@ export function useLocalStorage<T>(key: string, initialValue: T): UseLocalStorag
  */
 export function useLocalStorageWithRemove<T>(
   key: string,
-  initialValue: T
+  initialValue: T,
 ): UseLocalStorageWithRemoveReturn<T> {
   const [value, setValue] = useLocalStorage(key, initialValue);
 
   const removeValue = useCallback(() => {
     try {
-      window.localStorage.removeItem(key);
+      safeRemoveItem(key);
       setValue(initialValue);
     } catch (error) {
       console.error(`Error removing localStorage key "${key}":`, error);

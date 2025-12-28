@@ -1,7 +1,7 @@
 # Escalada - AI Coding Agent Guide
 
 ## Project Overview
-Real-time climbing competition management system with WebSocket-based synchronization. Backend (FastAPI) handles state management, validation, and rate limiting. Frontend (React + Vite) provides control panel and judge interfaces with live timer/scoring updates.
+Real-time climbing competition management system with WebSocket-based synchronization. Backend (FastAPI) handles state management, validation, and rate limiting. Frontend (React 19 + TypeScript + Vite) provides control panel and judge interfaces with live timer/scoring updates.
 
 ## Architecture
 
@@ -12,10 +12,12 @@ Real-time climbing competition management system with WebSocket-based synchroniz
 - **Key pattern**: Commands flow through `/api/cmd` → validation → rate limiting → state update → WebSocket broadcast
 
 ### Frontend (React 19 + Vite)
-- **Control Panel**: `escalada-ui/src/components/ControlPanel.jsx` - Main operator interface managing multiple competition "boxes"
-- **Judge Interface**: `escalada-ui/src/components/JudgePage.jsx` - Per-box scoring interface with timer/progress UI
+- **Control Panel**: `escalada-ui/src/components/ControlPanel.tsx` - Main operator interface managing multiple competition "boxes"
+- **Judge Interface**: `escalada-ui/src/components/JudgePage.tsx` - Per-box scoring interface with timer/progress UI
+- **Contest Display**: `escalada-ui/src/components/ContestPage.tsx` - Large screen display with rankings and timer
 - **State management**: Centralized in `escalada-ui/src/utilis/useAppState.jsx` (React Context) with localStorage persistence
 - **Real-time sync**: `useWebSocketWithHeartbeat.js` provides auto-reconnect with PING/PONG heartbeat every 30s
+- **TypeScript**: Core components (ControlPanel, JudgePage, ContestPage) converted to .tsx with full type safety
 
 ### Communication Flow
 1. User action (e.g., START_TIMER) → `contestActions.js` → POST `/api/cmd` with `boxVersion`
@@ -97,13 +99,11 @@ npm run dev  # Vite dev server with HMR
 
 ### Testing
 ```bash
-# Backend tests (pytest + Vitest pattern)
-cd Escalada
-poetry run pytest tests/ -v  # 91 tests covering validation, rate limiting, security
+# Backend tests (pytest + Vitest3 tests (1 skipped) covering validation, rate limiting, security
 
 # Frontend tests (Vitest + React Testing Library)
 cd Escalada/escalada-ui
-npm test  # 28 tests for state management, messaging, control panel flows
+npm test  # 45 tests for state management, messaging, control panel flows
 npm run test:coverage  # Coverage report
 ```
 
@@ -112,19 +112,25 @@ npm run test:coverage  # Coverage report
 - **Mocks**: `__tests__/setup.js` mocks localStorage, WebSocket, BroadcastChannel for jsdom
 - **State tests**: `useAppState.test.jsx` validates Context provider, localStorage persistence, cross-tab sync
 - **Integration**: `test_live.py` validates command processing with 48 test cases
+- **Regression**: `ContestPage.test.jsx` validates JSON.parse edge cases (10 tests) for jsdom
+- **State tests**: `useAppState.test.jsx` validates Context provider, localStorage persistence, cross-tab sync
+- **Integration**: `test_live.py` validates command processing with 48 test cases
 
 ## File Conventions
+TypeScript Frontend
+- **Components**: PascalCase with .tsx extension (ControlPanel.tsx, JudgePage.tsx, ContestPage.tsx)
+- **Utilities**: camelCase in `utilis/` directory (note: typo kept for consistency)
+- **Type definitions**: `src/types/index.ts` with comprehensive interfaces (Box, Competitor, WebSocketMessage, etc.)
+- **State updates**: Use functional setState (`prev => ({ ...prev, [key]: value })`) for concurrency safety
+- **Refs**: Store latest state in refs when accessed in closures/effects (see ControlPanel.tsx lines 119-142)
+- **Generic types**: Full type annotations for useState, useRef, callbacks, event handlers
+- **Event types**: StorageEvent, MessageEvent<WebSocketMessage>, ErrorEvent for proper typing
 
 ### Python Backend
 - **Naming**: Snake_case for files/functions (FastAPI standard)
 - **Logging**: Use module-level `logger = logging.getLogger(__name__)` - logs to `escalada.log` + stdout
 - **Async**: All WebSocket/state handlers use `async def` with asyncio locks
-- **Type hints**: Use modern Python 3.11+ syntax (`int | None` instead of `Optional[int]`)
-
-### React Frontend
-- **Components**: PascalCase files (ControlPanel.jsx, JudgePage.jsx)
-- **Utilities**: camelCase in `utilis/` directory (note: typo kept for consistency)
-- **State updates**: Use functional setState (`prev => ({ ...prev, [key]: value })`) for concurrency safety
+- **Type hints**: Use modern Python 3.11+ syntax (`int | None` instead of `Optional[int]`
 - **Refs**: Store latest state in refs when accessed in closures/effects (see `ControlPanel.jsx` lines 105-125)
 
 ### Dynamic API Configuration
@@ -157,7 +163,38 @@ if (!trimmed || trimmed === '""' || trimmed === 'null' || trimmed === 'undefined
   return; // Don't send command
 }
 ```
-**Why:** Other tabs might write `JSON.stringify("")` which appears non-empty (`'""'` = 2 chars) but backend rejects as empty after validation. This prevents 400 errors on ACTIVE_CLIMBER and similar commands.
+**WhShared TypeScript Types (src/types/index.ts)
+```typescript
+interface Box {
+  idx: number;  // Box ID (array index)
+  name: string;
+  routeIndex: number;  // Current route (1-based)
+  routesCount: number;  // Total routes in competition
+  holdsCount: number;  // Holds on current route
+  timerPreset: string;  // mm:ss format
+  categorie: string;
+  concurenti: Competitor[];
+}
+
+interface Competitor {
+  name: string;
+  score: number;
+  time: number | null;
+  marked: boolean;
+  club?: string;
+}
+
+interface WebSocketMessage {
+  type: string;
+  boxId: number;
+  // ... additional fields based on message type
+}
+
+type TimerState = "idle" | "running" | "paused";
+type LoadingBoxes = Set<number>;
+```
+
+### y:** Other tabs might write `JSON.stringify("")` which appears non-empty (`'""'` = 2 chars) but backend rejects as empty after validation. This prevents 400 errors on ACTIVE_CLIMBER and similar commands.
 
 ## Data Model
 
@@ -181,14 +218,20 @@ if (!trimmed || trimmed === '""' || trimmed === 'null' || trimmed === 'undefined
     "initiated": False,  # Route initialized
     "holdsCount": 0,
     "currentClimber": "",
-    "started": False,  # Timer started
-    "timerState": "idle",  # "idle" | "running" | "paused"
-    "holdCount": 0.0,  # Progress (holds climbed)
-    "remaining": None,  # Remaining time (seconds)
-    "version": None,  # boxVersion for stale command prevention
-}
-```
+    "started": F3 backend + 45 frontend tests with full coverage of validation/rate limiting
+- **TypeScript Migration**: Converted 3165 lines (ControlPanel, JudgePage, ContestPage) to TypeScript
+  - Created shared type definitions in src/types/index.ts
+  - Full generic types for useState, useRef, callbacks, event handlers
+  - Type-safe window.postMessage and WebSocket messages
+  - Zero regressions - all 45 frontend tests passing
+- **Bug Fixes**: Next Route button guard for single-route boxes, CORS regex configurability
+- **State Bleed Prevention** (Dec 24): Session ID invalidation blocks phantom commands from old Judge tabs
 
+## References
+- **API Documentation**: See `FINAL_REPORT.md` for full feature list and test coverage (138 tests total)
+- **Bug History**: `BUGFIX_NEXT_ROUTE_AND_CORS.md`, `BUGFIX_SUMMARY.md` for resolved issues
+- **Test Examples**: `tests/test_live.py` (backend), `escalada-ui/src/__tests__/` (frontend)
+- **TypeScript Types**: `escalada-ui/src/types/index.ts` for shared interface definitions
 ## Common Tasks
 
 ### Adding New Command Type

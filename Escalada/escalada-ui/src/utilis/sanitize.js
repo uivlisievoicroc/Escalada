@@ -14,7 +14,7 @@ export const sanitizeText = (text) => {
   if (!text || typeof text !== 'string') {
     return '';
   }
-  
+
   // Strip ALL HTML tags (ALLOWED_TAGS: [])
   // This prevents XSS like: <script>alert(1)</script> or <img onerror="alert(1)">
   return DOMPurify.sanitize(text, { ALLOWED_TAGS: [] });

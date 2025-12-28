@@ -1,5 +1,5 @@
 const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
-const API_BASE     = `${API_PROTOCOL}://${window.location.hostname}:8000/api`;
+const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000/api`;
 
 /**
  * Fetches the podium (top-3) for a given contest box from the backend.

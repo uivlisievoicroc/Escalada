@@ -2,7 +2,7 @@
  * Debug utility for environment-gated logging
  * In development (DEV), all logs are printed to console
  * In production (PROD), only errors are logged
- * 
+ *
  * Usage:
  *   import { debugLog, debugWarn, debugError } from '../utilis/debug';
  *   debugLog('Message with args:', arg1, arg2); // Only in DEV

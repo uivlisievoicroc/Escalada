@@ -56,12 +56,8 @@ export interface UseMessagingReturn {
  */
 export function useMessaging(
   wsUrl: string,
-  onMessage?: (
-    msg: any,
-    ws: WebSocket | null,
-    meta?: { source: string; channel?: string }
-  ) => void,
-  options: MessagingOptions = {}
+  onMessage?: (msg: any, ws: WebSocket | null, meta?: { source: string; channel?: string }) => void,
+  options: MessagingOptions = {},
 ): UseMessagingReturn {
   const {
     broadcastChannels = ['escalada-state', 'timer-cmd'],
@@ -241,28 +237,25 @@ export function useMessaging(
     }
   }, []);
 
-  const broadcast = useCallback(
-    (message: any, channelName: string | null = null): boolean => {
-      const channels = channelName
-        ? bcRefs.current[channelName]
-          ? [bcRefs.current[channelName]]
-          : []
-        : Object.values(bcRefs.current);
+  const broadcast = useCallback((message: any, channelName: string | null = null): boolean => {
+    const channels = channelName
+      ? bcRefs.current[channelName]
+        ? [bcRefs.current[channelName]]
+        : []
+      : Object.values(bcRefs.current);
 
-      let success = true;
-      channels.forEach((bc) => {
-        try {
-          bc.postMessage(message);
-        } catch (err) {
-          console.error('Failed to broadcast message:', err);
-          success = false;
-        }
-      });
+    let success = true;
+    channels.forEach((bc) => {
+      try {
+        bc.postMessage(message);
+      } catch (err) {
+        console.error('Failed to broadcast message:', err);
+        success = false;
+      }
+    });
 
-      return success;
-    },
-    []
-  );
+    return success;
+  }, []);
 
   const sendAndBroadcast = useCallback(
     (message: any, broadcastChannelName: string | null = null): boolean => {
@@ -270,7 +263,7 @@ export function useMessaging(
       const bcSent = broadcast(message, broadcastChannelName);
       return wsSent || bcSent;
     },
-    [send, broadcast]
+    [send, broadcast],
   );
 
   // ==================== STATUS AND UTILITIES ====================

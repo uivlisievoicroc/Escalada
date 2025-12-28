@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { debugError } from './debug';
-import { safeSetItem, safeGetItem, safeRemoveItem } from './storage';
+import { safeSetItem, safeGetItem, safeRemoveItem, storageKey } from './storage';
 
 /**
  * Custom hook for managing localStorage with error handling
@@ -12,12 +12,11 @@ export function useLocalStorage(key, initialValue) {
   // State to store our value
   const [storedValue, setStoredValue] = useState(() => {
     try {
-      const item = window.localStorage.getItem(key);
-      if (!item) return initialValue;
+      const item = safeGetItem(key);
+      if (item == null) return initialValue;
       try {
         return JSON.parse(item);
       } catch {
-        // fallback: accept plain string values (e.g., "05:00")
         return item;
       }
     } catch (error) {
@@ -28,18 +27,19 @@ export function useLocalStorage(key, initialValue) {
 
   // Return a wrapped version of useState's setter function that
   // persists the new value to localStorage
-  const setValue = useCallback((value) => {
-    const valueToStore = value instanceof Function ? value(storedValue) : value;
-    setStoredValue(valueToStore);
-    if (window.localStorage) {
+  const setValue = useCallback(
+    (value) => {
+      const valueToStore = value instanceof Function ? value(storedValue) : value;
+      setStoredValue(valueToStore);
       safeSetItem(key, JSON.stringify(valueToStore));
-    }
-  }, [key, storedValue]);
+    },
+    [key, storedValue],
+  );
 
   // Listen for changes in other tabs/windows
   useEffect(() => {
     const handleStorageChange = (e) => {
-      if (e.key === key && e.newValue) {
+      if ((e.key === storageKey(key) || e.key === key) && e.newValue) {
         try {
           setStoredValue(JSON.parse(e.newValue));
         } catch (error) {
@@ -66,7 +66,7 @@ export function useLocalStorageWithRemove(key, initialValue) {
 
   const removeValue = useCallback(() => {
     try {
-      window.localStorage.removeItem(key);
+      safeRemoveItem(key);
       setValue(initialValue);
     } catch (error) {
       debugError(`Error removing localStorage key "${key}":`, error);

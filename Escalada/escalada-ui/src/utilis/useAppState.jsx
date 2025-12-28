@@ -20,87 +20,102 @@ export function AppStateProvider({ children }) {
   // ==================== PERSISTENT STATE (localStorage) ====================
   const [listboxes, setListboxes] = useLocalStorage('listboxes', []);
   const [climbingTime, setClimbingTime] = useLocalStorage('climbingTime', '05:00');
-  const [timeCriterionEnabled, setTimeCriterionEnabled] = useLocalStorage('timeCriterionEnabled', false);
+  const [timeCriterionEnabled, setTimeCriterionEnabled] = useLocalStorage(
+    'timeCriterionEnabled',
+    false,
+  );
 
   // ==================== RUNTIME STATE (memory) ====================
   // Timer state per box: { [boxId]: "running" | "paused" | "idle" }
   const [timerStates, setTimerStates] = useState({});
-  
+
   // Registered times per box: { [boxId]: <seconds> }
   const [registeredTimes, setRegisteredTimes] = useState({});
-  
+
   // Hold clicks per box: { [boxId]: <number> }
   const [holdClicks, setHoldClicks] = useState({});
-  
+
   // Current climbers per box: { [boxId]: "Name" }
   const [currentClimbers, setCurrentClimbers] = useState({});
-  
+
   // Control timers per box: { [boxId]: <remaining_seconds> }
   const [controlTimers, setControlTimers] = useState({});
-  
+
   // Half hold tracking: { [boxId]: <boolean> }
   const [usedHalfHold, setUsedHalfHold] = useState({});
 
   // ==================== BOX-SPECIFIC STATE ====================
-  const getBoxState = useCallback((boxId) => ({
-    timerState: timerStates[boxId] || 'idle',
-    registeredTime: registeredTimes[boxId] || null,
-    holdCount: holdClicks[boxId] || 0,
-    currentClimber: currentClimbers[boxId] || '',
-    remaining: controlTimers[boxId] || null,
-    usedHalfHold: usedHalfHold[boxId] || false,
-    timerPreset: listboxes[boxId]?.timerPreset || climbingTime,
-  }), [timerStates, registeredTimes, holdClicks, currentClimbers, controlTimers, usedHalfHold, listboxes, climbingTime]);
+  const getBoxState = useCallback(
+    (boxId) => ({
+      timerState: timerStates[boxId] || 'idle',
+      registeredTime: registeredTimes[boxId] || null,
+      holdCount: holdClicks[boxId] || 0,
+      currentClimber: currentClimbers[boxId] || '',
+      remaining: controlTimers[boxId] || null,
+      usedHalfHold: usedHalfHold[boxId] || false,
+      timerPreset: listboxes[boxId]?.timerPreset || climbingTime,
+    }),
+    [
+      timerStates,
+      registeredTimes,
+      holdClicks,
+      currentClimbers,
+      controlTimers,
+      usedHalfHold,
+      listboxes,
+      climbingTime,
+    ],
+  );
 
   // ==================== STATE UPDATERS ====================
   const updateBoxState = useCallback((boxId, updates) => {
     if (updates.timerState !== undefined) {
-      setTimerStates(prev => ({ ...prev, [boxId]: updates.timerState }));
+      setTimerStates((prev) => ({ ...prev, [boxId]: updates.timerState }));
     }
     if (updates.registeredTime !== undefined) {
-      setRegisteredTimes(prev => ({ ...prev, [boxId]: updates.registeredTime }));
+      setRegisteredTimes((prev) => ({ ...prev, [boxId]: updates.registeredTime }));
     }
     if (updates.holdCount !== undefined) {
-      setHoldClicks(prev => ({ ...prev, [boxId]: updates.holdCount }));
+      setHoldClicks((prev) => ({ ...prev, [boxId]: updates.holdCount }));
     }
     if (updates.currentClimber !== undefined) {
-      setCurrentClimbers(prev => ({ ...prev, [boxId]: updates.currentClimber }));
+      setCurrentClimbers((prev) => ({ ...prev, [boxId]: updates.currentClimber }));
     }
     if (updates.remaining !== undefined) {
-      setControlTimers(prev => ({ ...prev, [boxId]: updates.remaining }));
+      setControlTimers((prev) => ({ ...prev, [boxId]: updates.remaining }));
     }
     if (updates.usedHalfHold !== undefined) {
-      setUsedHalfHold(prev => ({ ...prev, [boxId]: updates.usedHalfHold }));
+      setUsedHalfHold((prev) => ({ ...prev, [boxId]: updates.usedHalfHold }));
     }
   }, []);
 
   const clearBoxState = useCallback((boxId) => {
-    setTimerStates(prev => {
+    setTimerStates((prev) => {
       const updated = { ...prev };
       delete updated[boxId];
       return updated;
     });
-    setRegisteredTimes(prev => {
+    setRegisteredTimes((prev) => {
       const updated = { ...prev };
       delete updated[boxId];
       return updated;
     });
-    setHoldClicks(prev => {
+    setHoldClicks((prev) => {
       const updated = { ...prev };
       delete updated[boxId];
       return updated;
     });
-    setCurrentClimbers(prev => {
+    setCurrentClimbers((prev) => {
       const updated = { ...prev };
       delete updated[boxId];
       return updated;
     });
-    setControlTimers(prev => {
+    setControlTimers((prev) => {
       const updated = { ...prev };
       delete updated[boxId];
       return updated;
     });
-    setUsedHalfHold(prev => {
+    setUsedHalfHold((prev) => {
       const updated = { ...prev };
       delete updated[boxId];
       return updated;
@@ -108,12 +123,15 @@ export function AppStateProvider({ children }) {
   }, []);
 
   // ==================== CONFIGURATION ====================
-  const getTimerPreset = useCallback((boxId) => {
-    return listboxes[boxId]?.timerPreset || climbingTime;
-  }, [listboxes, climbingTime]);
+  const getTimerPreset = useCallback(
+    (boxId) => {
+      return listboxes[boxId]?.timerPreset || climbingTime;
+    },
+    [listboxes, climbingTime],
+  );
 
   const setTimerPreset = useCallback((boxId, preset) => {
-    setListboxes(prev => {
+    setListboxes((prev) => {
       const updated = [...prev];
       if (updated[boxId]) {
         updated[boxId] = { ...updated[boxId], timerPreset: preset };
@@ -123,20 +141,23 @@ export function AppStateProvider({ children }) {
   }, []);
 
   // ==================== UTILITY FUNCTIONS ====================
-  const addBox = useCallback((boxConfig = {}) => {
-    const newIdx = listboxes.length;
-    const newBox = {
-      idx: newIdx,
-      name: boxConfig.name || `Box ${newIdx + 1}`,
-      timerPreset: boxConfig.timerPreset || climbingTime,
-      ...boxConfig,
-    };
-    setListboxes(prev => [...prev, newBox]);
-    return newIdx;
-  }, [listboxes.length, climbingTime]);
+  const addBox = useCallback(
+    (boxConfig = {}) => {
+      const newIdx = listboxes.length;
+      const newBox = {
+        idx: newIdx,
+        name: boxConfig.name || `Box ${newIdx + 1}`,
+        timerPreset: boxConfig.timerPreset || climbingTime,
+        ...boxConfig,
+      };
+      setListboxes((prev) => [...prev, newBox]);
+      return newIdx;
+    },
+    [listboxes.length, climbingTime],
+  );
 
   const removeBox = useCallback((boxId) => {
-    setListboxes(prev => prev.filter((_, idx) => idx !== boxId));
+    setListboxes((prev) => prev.filter((_, idx) => idx !== boxId));
     clearBoxState(boxId);
   }, []);
 
@@ -155,7 +176,7 @@ export function AppStateProvider({ children }) {
     bcRef.current = new BroadcastChannel('escalada-state');
     bcRef.current.onmessage = (event) => {
       const { type, boxId, payload } = event.data;
-      
+
       switch (type) {
         case 'UPDATE_BOX_STATE':
           updateBoxState(boxId, payload);
@@ -178,7 +199,7 @@ export function AppStateProvider({ children }) {
     bcCmdRef.current = new BroadcastChannel('timer-cmd');
     bcCmdRef.current.onmessage = (event) => {
       const { boxId, action } = event.data;
-      
+
       switch (action) {
         case 'START_TIMER':
           updateBoxState(boxId, { timerState: 'running' });
@@ -260,11 +281,7 @@ export function AppStateProvider({ children }) {
     broadcastCommand,
   };
 
-  return (
-    <AppStateContext.Provider value={value}>
-      {children}
-    </AppStateContext.Provider>
-  );
+  return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }
 
 /**
@@ -273,11 +290,11 @@ export function AppStateProvider({ children }) {
  */
 export function useAppState() {
   const context = useContext(AppStateContext);
-  
+
   if (!context) {
     throw new Error('useAppState must be used within AppStateProvider');
   }
-  
+
   return context;
 }
 
@@ -287,12 +304,7 @@ export function useAppState() {
  * @returns {Object} - Box-specific state and updaters
  */
 export function useBoxState(boxId) {
-  const {
-    getBoxState,
-    updateBoxState,
-    getTimerPreset,
-    setTimerPreset,
-  } = useAppState();
+  const { getBoxState, updateBoxState, getTimerPreset, setTimerPreset } = useAppState();
 
   const boxState = getBoxState(boxId);
 

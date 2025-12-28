@@ -1,0 +1,110 @@
+name: Nightly Tests
+
+on:
+  schedule:
+    # Run tests every day at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  nightly-backend-tests:
+    name: Nightly Backend Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: latest
+          virtualenvs-in-project: true
+      
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v3
+        with:
+          path: Escalada/.venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('Escalada/poetry.lock') }}
+      
+      - name: Install dependencies
+        working-directory: Escalada
+        run: poetry install
+      
+      - name: Run comprehensive backend tests
+        working-directory: Escalada
+        run: |
+          poetry run pytest tests/ -v --tb=long --durations=10
+      
+      - name: Generate detailed coverage report
+        working-directory: Escalada
+        run: |
+          poetry run pytest tests/ --cov=escalada --cov-report=html --cov-report=term-missing
+      
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: backend-coverage-report
+          path: Escalada/htmlcov/
+          retention-days: 30
+
+  nightly-frontend-tests:
+    name: Nightly Frontend Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: Escalada/escalada-ui/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: Escalada/escalada-ui
+        run: npm ci
+      
+      - name: Run all tests with coverage
+        working-directory: Escalada/escalada-ui
+        run: npm test -- --run --coverage
+      
+      - name: Install Playwright browsers
+        working-directory: Escalada/escalada-ui
+        run: npx playwright install --with-deps chromium
+      
+      - name: Run E2E tests with extended timeout
+        working-directory: Escalada/escalada-ui
+        run: npx playwright test --reporter=html --timeout=60000
+      
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-test-reports
+          path: Escalada/escalada-ui/playwright-report/
+          retention-days: 30
+
+  test-report:
+    name: Send Test Report
+    needs: [nightly-backend-tests, nightly-frontend-tests]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Check test results
+        run: |
+          echo "📊 Nightly Test Report"
+          echo "Backend Tests: ${{ needs.nightly-backend-tests.result }}"
+          echo "Frontend Tests: ${{ needs.nightly-frontend-tests.result }}"
+          
+          if [ "${{ needs.nightly-backend-tests.result }}" = "success" ] && [ "${{ needs.nightly-frontend-tests.result }}" = "success" ]; then
+            echo "✅ All nightly tests passed!"
+          else
+            echo "⚠️ Some tests failed. Check artifacts for details."
+          fi

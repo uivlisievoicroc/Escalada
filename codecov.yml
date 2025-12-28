@@ -1,0 +1,48 @@
+codecov:
+  require_ci_to_pass: yes
+  precision: 2
+  round: down
+  layout: "reach,diff,flags,tree"
+  behavior: default
+
+coverage:
+  precision: 2
+  round: down
+  range:
+    - 70
+    - 100
+
+ignore:
+  - "tests"
+  - "**/test_*.py"
+  - "**/*.test.js"
+  - "**/*.test.ts"
+  - "**/*.spec.ts"
+
+flags:
+  backend:
+    paths:
+      - escalada/
+    carryforward: yes
+    statuses:
+      - type: absolute
+        target: 80%
+  frontend-unit:
+    paths:
+      - escalada-ui/src/
+    carryforward: yes
+    statuses:
+      - type: absolute
+        target: 75%
+
+comment:
+  layout: "reach, diff, flags, tree"
+  behavior: default
+  require_changes: no
+  require_base: no
+  require_head: yes
+  hide_branch_upload: no
+  hide_project_upload: no
+
+github_checks:
+  annotations: yes

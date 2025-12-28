@@ -1,23 +1,21 @@
+import logging
+import os
+import sys
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from escalada.routers.upload import router as upload_router
-from escalada.api.save_ranking import router as save_ranking_router
+from time import time
+
 from escalada.api.live import router as live_router
 from escalada.api.podium import router as podium_router
-import os
-import logging
-import sys
-from time import time
+from escalada.api.save_ranking import router as save_ranking_router
+from escalada.routers.upload import router as upload_router
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('escalada.log')
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler("escalada.log")],
 )
 
 logger = logging.getLogger(__name__)
@@ -36,7 +34,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Escalada Control Panel API",
-    lifespan=lifespan  # Use modern lifespan instead of on_event decorators
+    lifespan=lifespan,  # Use modern lifespan instead of on_event decorators
 )
 
 # Secure CORS configuration
@@ -62,10 +60,12 @@ app.add_middleware(
 async def log_requests(request, call_next):
     """Log all HTTP requests and responses"""
     start_time = time()
-    
+
     # Log incoming request
-    logger.info(f"{request.method} {request.url.path} - Client: {request.client.host if request.client else 'unknown'}")
-    
+    logger.info(
+        f"{request.method} {request.url.path} - Client: {request.client.host if request.client else 'unknown'}"
+    )
+
     try:
         response = await call_next(request)
         process_time = time() - start_time
@@ -77,11 +77,12 @@ async def log_requests(request, call_next):
         process_time = time() - start_time
         logger.error(
             f"{request.method} {request.url.path} - Error: {str(e)} - Duration: {process_time:.3f}s",
-            exc_info=True
+            exc_info=True,
         )
         raise
 
+
 app.include_router(upload_router, prefix="/api")
-app.include_router(save_ranking_router, prefix="/api")  
+app.include_router(save_ranking_router, prefix="/api")
 app.include_router(live_router, prefix="/api")
 app.include_router(podium_router, prefix="/api")

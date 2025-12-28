@@ -1,28 +1,23 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 
-const ModalModifyScore = ({
-  isOpen,
-  competitors,
-  scores,
-  times = {},
-  onClose,
-  onSubmit
-}) => {
-  const [selected, setSelected] = useState("");
-  const [score, setScore] = useState("");
-  const [timeValue, setTimeValue] = useState("");
+const ModalModifyScore = ({ isOpen, competitors, scores, times = {}, onClose, onSubmit }) => {
+  const [selected, setSelected] = useState('');
+  const [score, setScore] = useState('');
+  const [timeValue, setTimeValue] = useState('');
 
   const formatTime = (sec) => {
-    if (typeof sec !== "number" || Number.isNaN(sec)) return "";
-    const m = Math.floor(sec / 60).toString().padStart(2, "0");
-    const s = (sec % 60).toString().padStart(2, "0");
+    if (typeof sec !== 'number' || Number.isNaN(sec)) return '';
+    const m = Math.floor(sec / 60)
+      .toString()
+      .padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
   };
 
   const parseTimeInput = (val) => {
     if (!val) return null;
     if (/^\d{1,2}:\d{2}$/.test(val)) {
-      const [m, s] = val.split(":").map(Number);
+      const [m, s] = val.split(':').map(Number);
       return (m || 0) * 60 + (s || 0);
     }
     const num = Number(val);
@@ -38,9 +33,9 @@ const ModalModifyScore = ({
 
   useEffect(() => {
     if (selected) {
-      setScore(scores[selected]?.toString() ?? "");
+      setScore(scores[selected]?.toString() ?? '');
       const t = times[selected];
-      setTimeValue(t != null ? formatTime(t) : "");
+      setTimeValue(t != null ? formatTime(t) : '');
     }
   }, [selected, scores, times]);
 
@@ -55,30 +50,32 @@ const ModalModifyScore = ({
           <select
             className="w-full border p-2 rounded"
             value={selected}
-            onChange={e => setSelected(e.target.value)}
+            onChange={(e) => setSelected(e.target.value)}
           >
-            {competitors.map(c => (
-              <option key={c} value={c}>{c}</option>
+            {competitors.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
             ))}
           </select>
         </div>
         <form
-          onSubmit={e => {
+          onSubmit={(e) => {
             e.preventDefault();
             const numericScore = parseFloat(score);
             if (isNaN(numericScore)) {
-              alert("Invalid score");
+              alert('Invalid score');
               return;
             }
             const parsedTime = parseTimeInput(timeValue);
             if (timeValue && parsedTime === null) {
-              alert("Invalid time (use mm:ss or seconds).");
+              alert('Invalid time (use mm:ss or seconds).');
               return;
             }
             onSubmit(selected, numericScore, parsedTime);
-            setSelected("");
-            setScore("");
-            setTimeValue("");
+            setSelected('');
+            setScore('');
+            setTimeValue('');
           }}
         >
           <label className="block mb-1 font-semibold">Score</label>
@@ -89,7 +86,7 @@ const ModalModifyScore = ({
             id="modify-score-input"
             name="score"
             value={score}
-            onChange={e => setScore(e.target.value)}
+            onChange={(e) => setScore(e.target.value)}
             required
           />
           <label className="block mb-1 font-semibold mt-3">Time (mm:ss, optional)</label>
@@ -100,7 +97,7 @@ const ModalModifyScore = ({
             id="modify-time-input"
             name="time"
             value={timeValue}
-            onChange={e => setTimeValue(e.target.value)}
+            onChange={(e) => setTimeValue(e.target.value)}
           />
           <div className="mt-4 flex justify-end gap-2">
             <button type="button" className="px-4 py-1 border rounded" onClick={onClose}>

@@ -108,7 +108,7 @@ export const AppStateProvider: FC<PropsWithChildren> = ({ children }) => {
   const [climbingTime, setClimbingTime] = useLocalStorage<string>('climbingTime', '05:00');
   const [timeCriterionEnabled, setTimeCriterionEnabled] = useLocalStorage<boolean>(
     'timeCriterionEnabled',
-    false
+    false,
   );
 
   // ==================== RUNTIME STATE (memory) ====================
@@ -130,7 +130,16 @@ export const AppStateProvider: FC<PropsWithChildren> = ({ children }) => {
       usedHalfHold: usedHalfHold[boxId] ?? false,
       timerPreset: listboxes[boxId]?.timerPreset || climbingTime,
     }),
-    [timerStates, registeredTimes, holdClicks, currentClimbers, controlTimers, usedHalfHold, listboxes, climbingTime]
+    [
+      timerStates,
+      registeredTimes,
+      holdClicks,
+      currentClimbers,
+      controlTimers,
+      usedHalfHold,
+      listboxes,
+      climbingTime,
+    ],
   );
 
   // ==================== STATE UPDATERS ====================
@@ -196,7 +205,7 @@ export const AppStateProvider: FC<PropsWithChildren> = ({ children }) => {
     (boxId: number) => {
       return listboxes[boxId]?.timerPreset || climbingTime;
     },
-    [listboxes, climbingTime]
+    [listboxes, climbingTime],
   );
 
   const setTimerPreset = useCallback((boxId: number, preset: string) => {
@@ -222,7 +231,7 @@ export const AppStateProvider: FC<PropsWithChildren> = ({ children }) => {
       setListboxes((prev) => [...prev, newBox]);
       return newIdx;
     },
-    [listboxes.length, climbingTime]
+    [listboxes.length, climbingTime],
   );
 
   // helper to shift all per-box state maps after a deletion
@@ -246,7 +255,7 @@ export const AppStateProvider: FC<PropsWithChildren> = ({ children }) => {
       setControlTimers((prev) => reindexStateMap(prev, boxId));
       setUsedHalfHold((prev) => reindexStateMap(prev, boxId));
     },
-    [reindexStateMap]
+    [reindexStateMap],
   );
 
   const reorderBoxes = useCallback((newOrder: BoxConfig[]) => {
@@ -379,11 +388,7 @@ export const AppStateProvider: FC<PropsWithChildren> = ({ children }) => {
     broadcastCommand,
   };
 
-  return (
-    <AppStateContext.Provider value={value}>
-      {children}
-    </AppStateContext.Provider>
-  );
+  return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 };
 
 /**

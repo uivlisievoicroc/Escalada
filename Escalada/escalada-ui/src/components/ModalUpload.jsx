@@ -1,13 +1,13 @@
-import React, { useState } from "react";
-import { debugLog, debugError } from "../utilis/debug";
+import React, { useState } from 'react';
+import { debugLog, debugError } from '../utilis/debug';
 
-const API_PROTOCOL = window.location.protocol === "https:" ? "https" : "http";
+const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
 const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000/api`;
 
 const ModalUpload = ({ isOpen, onClose, onUpload }) => {
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState('');
   const [file, setFile] = useState(null);
-  const [routesCount, setRoutesCount] = useState("");
+  const [routesCount, setRoutesCount] = useState('');
   const [holdsCounts, setHoldsCounts] = useState([]);
 
   const handleSubmit = async (e) => {
@@ -17,7 +17,7 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
       !category ||
       !routesCount ||
       holdsCounts.length !== Number(routesCount) ||
-      holdsCounts.some(h => !h)
+      holdsCounts.some((h) => !h)
     ) {
       alert('Completează toate câmpurile');
       return;
@@ -25,20 +25,20 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
 
     try {
       const formData = new FormData();
-      formData.append("routesCount", routesCount);
-      formData.append("holdsCounts", JSON.stringify(holdsCounts));
-      formData.append("category", category);
-      formData.append("file", file);
-      formData.append("include_clubs", "true");
+      formData.append('routesCount', routesCount);
+      formData.append('holdsCounts', JSON.stringify(holdsCounts));
+      formData.append('category', category);
+      formData.append('file', file);
+      formData.append('include_clubs', 'true');
 
       const res = await fetch(`${API_BASE}/upload`, {
-        method: "POST",
+        method: 'POST',
         body: formData,
       });
 
       if (!res.ok) {
         const errorText = await res.text();
-        debugError("Eroare la upload:", errorText);
+        debugError('Eroare la upload:', errorText);
         alert(`Eroare: ${errorText}`);
         return;
       }
@@ -92,7 +92,7 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
           onChange={(e) => {
             const val = e.target.value;
             setRoutesCount(val);
-            setHoldsCounts(Array(Number(val)).fill(""));
+            setHoldsCounts(Array(Number(val)).fill(''));
           }}
           className="w-full border border-gray-300 p-2 rounded"
           required
@@ -107,7 +107,7 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
               id={`upload-holds-${i + 1}`}
               name={`holdsRoute${i + 1}`}
               placeholder={`Nr of holds, Route ${i + 1}`}
-              value={holdsCounts[i] || ""}
+              value={holdsCounts[i] || ''}
               onChange={(e) => {
                 const newCounts = [...holdsCounts];
                 newCounts[i] = e.target.value;

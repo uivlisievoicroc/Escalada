@@ -6,7 +6,7 @@ import { debugLog, debugWarn, debugError } from './debug';
  * Provides a single API for sending messages across:
  * 1. WebSocket (server communication)
  * 2. BroadcastChannel (cross-tab communication)
- * 
+ *
  * Usage:
  * const messaging = useMessaging(wsUrl, onMessage, options);
  * messaging.send({ type: 'PROGRESS_UPDATE', delta: 1 });
@@ -36,7 +36,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
 
       ws.onopen = () => {
         debugLog('📡 Messaging WebSocket connected:', wsUrl);
-        
+
         // Flush message queue
         while (messageQueueRef.current.length > 0) {
           const msg = messageQueueRef.current.shift();
@@ -97,7 +97,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
 
       ws.onclose = () => {
         debugLog('🔌 Messaging WebSocket closed');
-        
+
         if (heartbeatInterval) {
           clearInterval(heartbeatInterval);
         }
@@ -124,7 +124,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
     if (typeof BroadcastChannel === 'undefined') return;
 
     // Initialize broadcast channels
-    broadcastChannels.forEach(channelName => {
+    broadcastChannels.forEach((channelName) => {
       try {
         const bc = new BroadcastChannel(channelName);
         bc.onmessage = (event) => {
@@ -139,7 +139,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
     });
 
     return () => {
-      Object.values(bcRefs.current).forEach(bc => {
+      Object.values(bcRefs.current).forEach((bc) => {
         try {
           bc.close();
         } catch (err) {
@@ -167,7 +167,7 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
   // ==================== MESSAGE SENDING ====================
   const send = useCallback((message) => {
     const ws = wsRef.current;
-    
+
     if (!ws) {
       // Queue message if WebSocket not connected
       messageQueueRef.current.push(message);
@@ -191,12 +191,14 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
   }, []);
 
   const broadcast = useCallback((message, channelName = null) => {
-    const channels = channelName 
-      ? bcRefs.current[channelName] ? [bcRefs.current[channelName]] : []
+    const channels = channelName
+      ? bcRefs.current[channelName]
+        ? [bcRefs.current[channelName]]
+        : []
       : Object.values(bcRefs.current);
 
     let success = true;
-    channels.forEach(bc => {
+    channels.forEach((bc) => {
       try {
         bc.postMessage(message);
       } catch (err) {
@@ -208,19 +210,25 @@ export function useMessaging(wsUrl, onMessage, options = {}) {
     return success;
   }, []);
 
-  const sendAndBroadcast = useCallback((message, broadcastChannels = null) => {
-    const wsSent = send(message);
-    const bcSent = broadcast(message, broadcastChannels);
-    return wsSent || bcSent;
-  }, [send, broadcast]);
+  const sendAndBroadcast = useCallback(
+    (message, broadcastChannels = null) => {
+      const wsSent = send(message);
+      const bcSent = broadcast(message, broadcastChannels);
+      return wsSent || bcSent;
+    },
+    [send, broadcast],
+  );
 
   // ==================== STATUS AND UTILITIES ====================
-  const getStatus = useCallback(() => ({
-    ws: wsRef.current?.readyState || WebSocket.CLOSED,
-    wsConnected: wsRef.current?.readyState === WebSocket.OPEN,
-    broadcastChannels: Object.keys(bcRefs.current),
-    messageQueueLength: messageQueueRef.current.length,
-  }), []);
+  const getStatus = useCallback(
+    () => ({
+      ws: wsRef.current?.readyState || WebSocket.CLOSED,
+      wsConnected: wsRef.current?.readyState === WebSocket.OPEN,
+      broadcastChannels: Object.keys(bcRefs.current),
+      messageQueueLength: messageQueueRef.current.length,
+    }),
+    [],
+  );
 
   const isConnected = useCallback(() => wsRef.current?.readyState === WebSocket.OPEN, []);
 

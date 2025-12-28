@@ -15,7 +15,7 @@ function seedLocalStorageForTwoBoxes() {
       timerPreset: '05:00',
       concurenti: [
         { nume: 'Ion', club: 'Alpin', marked: false },
-        { nume: 'Mihai', club: 'Climb', marked: false }
+        { nume: 'Mihai', club: 'Climb', marked: false },
       ],
     },
     {
@@ -28,7 +28,7 @@ function seedLocalStorageForTwoBoxes() {
       timerPreset: '05:00',
       concurenti: [
         { nume: 'Ana', club: 'Alpin', marked: false },
-        { nume: 'Maria', club: 'Climb', marked: false }
+        { nume: 'Maria', club: 'Climb', marked: false },
       ],
     },
   ];
@@ -75,7 +75,9 @@ describe('ControlPanel button flows', () => {
 
     // Verify fetch called with PROGRESS_UPDATE for both boxes
     const calls = global.fetch.mock.calls.map((c) => ({ url: c[0], body: c[1]?.body }));
-    const progressCalls = calls.filter((c) => typeof c.body === 'string' && c.body.includes('PROGRESS_UPDATE'));
+    const progressCalls = calls.filter(
+      (c) => typeof c.body === 'string' && c.body.includes('PROGRESS_UPDATE'),
+    );
     // At least two progress updates (one per box)
     expect(progressCalls.length).toBeGreaterThanOrEqual(2);
     // Ensure boxIds 0 and 1 present
@@ -105,7 +107,9 @@ describe('ControlPanel button flows', () => {
 
     // Verify REGISTER_TIME sent to backend
     const calls = global.fetch.mock.calls.map((c) => ({ url: c[0], body: c[1]?.body }));
-    const registerCalls = calls.filter((c) => typeof c.body === 'string' && c.body.includes('REGISTER_TIME'));
+    const registerCalls = calls.filter(
+      (c) => typeof c.body === 'string' && c.body.includes('REGISTER_TIME'),
+    );
     const hasBox0 = registerCalls.some((c) => c.body.includes('"boxId":0'));
     expect(hasBox0).toBe(true);
   });

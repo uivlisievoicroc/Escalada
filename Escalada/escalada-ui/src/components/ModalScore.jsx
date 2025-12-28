@@ -1,11 +1,21 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 
-const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, registeredTime, onClose, onSubmit }) => {
+const ModalScore = ({
+  isOpen,
+  competitor,
+  initialScore = 0,
+  maxScore,
+  registeredTime,
+  onClose,
+  onSubmit,
+}) => {
   const [score, setScore] = useState(initialScore.toString());
   const formatTime = (sec) => {
-    if (typeof sec !== "number" || Number.isNaN(sec)) return "";
-    const m = Math.floor(sec / 60).toString().padStart(2, "0");
-    const s = (sec % 60).toString().padStart(2, "0");
+    if (typeof sec !== 'number' || Number.isNaN(sec)) return '';
+    const m = Math.floor(sec / 60)
+      .toString()
+      .padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
   };
 
@@ -28,7 +38,7 @@ const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, registered
       // confirm if deviates from hold counter
       if (numericScore !== initialScore) {
         const ok = window.confirm(
-          "Inserted value different from the hold counter. Are you sure you want to continue?"
+          'Inserted value different from the hold counter. Are you sure you want to continue?',
         );
         if (!ok) {
           setScore(initialScore.toString());
@@ -36,7 +46,7 @@ const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, registered
         }
       }
       onSubmit(scaled / 10);
-      setScore("");
+      setScore('');
       onClose();
     } else {
       alert(`Insert valid score: only integers or values ending in .1 between 0 and ${maxScore}`);
@@ -52,7 +62,9 @@ const ModalScore = ({ isOpen, competitor, initialScore = 0, maxScore, registered
           Insert score for {competitor} (0 - {maxScore})
         </h2>
         {registeredTime != null && (
-          <p className="text-sm text-gray-600 mb-2">Registered time: {formatTime(registeredTime)}</p>
+          <p className="text-sm text-gray-600 mb-2">
+            Registered time: {formatTime(registeredTime)}
+          </p>
         )}
         <form onSubmit={handleSubmit}>
           <input
