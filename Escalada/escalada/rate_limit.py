@@ -18,7 +18,10 @@ class RateLimiter:
     """
 
     def __init__(
-        self, max_per_minute: int = 300, max_per_second: int = 20, block_duration: int = 60
+        self,
+        max_per_minute: int = 300,
+        max_per_second: int = 20,
+        block_duration: int = 60,
     ):
         """
         Initialize rate limiter
@@ -38,7 +41,9 @@ class RateLimiter:
         )
 
         # Per-command limits: { boxId: { command_type: [timestamp, ...] } }
-        self.command_history: Dict[int, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
+        self.command_history: Dict[int, Dict[str, list]] = defaultdict(
+            lambda: defaultdict(list)
+        )
 
         # Custom per-command limits
         self.command_limits: Dict[str, int] = {}
@@ -105,14 +110,18 @@ class RateLimiter:
             return False, f"Rate limit exceeded (too many requests per minute)"
 
         # Check command-specific limits
-        cmd_limit = self.command_limits.get(command_type, 999)  # Default: very permissive
+        cmd_limit = self.command_limits.get(
+            command_type, 999
+        )  # Default: very permissive
         cmd_requests = self.command_history[box_id][command_type]
 
         # Remove old command requests
         cmd_requests[:] = [ts for ts in cmd_requests if current_time - ts < 60]
 
         if len(cmd_requests) >= cmd_limit:
-            logger.warning(f"Box {box_id} exceeded {command_type} limit ({cmd_limit} per minute)")
+            logger.warning(
+                f"Box {box_id} exceeded {command_type} limit ({cmd_limit} per minute)"
+            )
             return False, f"Rate limit exceeded for {command_type} command"
 
         # Record this request
@@ -129,7 +138,9 @@ class RateLimiter:
         # Clean request history
         to_delete = []
         for box_id, history in self.request_history.items():
-            history["requests"][:] = [ts for ts in history["requests"] if ts > cutoff_time]
+            history["requests"][:] = [
+                ts for ts in history["requests"] if ts > cutoff_time
+            ]
             # Delete empty entries
             if not history["requests"] and history["blocked_until"] < current_time:
                 to_delete.append(box_id)
@@ -161,7 +172,9 @@ class RateLimiter:
         # Count per-command
         command_counts = {}
         for cmd_type, cmd_requests in self.command_history[box_id].items():
-            command_counts[cmd_type] = len([ts for ts in cmd_requests if current_time - ts < 60])
+            command_counts[cmd_type] = len(
+                [ts for ts in cmd_requests if current_time - ts < 60]
+            )
 
         return {
             "requests_per_second": recent_1sec,
@@ -180,13 +193,17 @@ def get_rate_limiter() -> RateLimiter:
     """Get or create global rate limiter"""
     global _rate_limiter
     if _rate_limiter is None:
-        _rate_limiter = RateLimiter(max_per_minute=300, max_per_second=20, block_duration=60)
+        _rate_limiter = RateLimiter(
+            max_per_minute=300, max_per_second=20, block_duration=60
+        )
 
         # Set command-specific limits
         _rate_limiter.set_command_limit("PROGRESS_UPDATE", 120)  # Frequent
         _rate_limiter.set_command_limit("INIT_ROUTE", 10)  # Rare
         _rate_limiter.set_command_limit("SUBMIT_SCORE", 30)  # Occasional
-        _rate_limiter.set_command_limit("REGISTER_TIME", 300)  # Allow frequent timestamp saves
+        _rate_limiter.set_command_limit(
+            "REGISTER_TIME", 300
+        )  # Allow frequent timestamp saves
 
     return _rate_limiter
 

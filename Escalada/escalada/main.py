@@ -4,12 +4,13 @@ import sys
 from contextlib import asynccontextmanager
 from time import time
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from escalada.api.live import router as live_router
 from escalada.api.podium import router as podium_router
 from escalada.api.save_ranking import router as save_ranking_router
 from escalada.routers.upload import router as upload_router
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -38,7 +39,9 @@ app = FastAPI(
 )
 
 # Secure CORS configuration
-DEFAULT_ORIGINS = "http://localhost:5173,http://localhost:3000,http://192.168.100.205:5173"
+DEFAULT_ORIGINS = (
+    "http://localhost:5173,http://localhost:3000,http://192.168.100.205:5173"
+)
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",")
 
 # Allow localhost, 127.0.0.1, local network IPs, and .local hostnames

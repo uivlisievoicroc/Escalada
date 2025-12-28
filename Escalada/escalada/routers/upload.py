@@ -27,12 +27,16 @@ async def upload_listbox(
     try:
         wb = openpyxl.load_workbook(filename=BytesIO(data), read_only=True)
     except BadZipFile:
-        raise HTTPException(status_code=400, detail="Fișierul încărcat nu este un .xlsx valid")
+        raise HTTPException(
+            status_code=400, detail="Fișierul încărcat nu este un .xlsx valid"
+        )
 
     try:
         ws = wb.active
         if ws is None:
-            raise HTTPException(status_code=400, detail="Fișierul Excel nu conține nicio foaie")
+            raise HTTPException(
+                status_code=400, detail="Fișierul Excel nu conține nicio foaie"
+            )
 
         competitors = []
         # presupunem că prima linie sunt anteturi: Nume, Club
@@ -63,4 +67,8 @@ async def upload_listbox(
         "timerPreset": "05:00",
     }
 
-    return {"status": "success", "message": "Listbox uploaded successfully", "listbox": new_listbox}
+    return {
+        "status": "success",
+        "message": "Listbox uploaded successfully",
+        "listbox": new_listbox,
+    }

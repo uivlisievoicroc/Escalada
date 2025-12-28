@@ -2,17 +2,16 @@
 import asyncio
 import json
 import logging
-
 # state per boxId
 from typing import Dict
 
-from escalada.rate_limit import check_rate_limit
-
-# Import validation and rate limiting
-from escalada.validation import InputSanitizer, ValidatedCmd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.websockets import WebSocket
+
+from escalada.rate_limit import check_rate_limit
+# Import validation and rate limiting
+from escalada.validation import InputSanitizer, ValidatedCmd
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +157,9 @@ async def cmd(cmd: Cmd):
                 "remaining": None,
                 "timerPreset": None,
                 "timerPresetSec": None,
-                "sessionId": str(uuid.uuid4()),  # Generated at creation, not at INIT_ROUTE
+                "sessionId": str(
+                    uuid.uuid4()
+                ),  # Generated at creation, not at INIT_ROUTE
                 "boxVersion": 0,  # Incremented on INIT_ROUTE to prevent stale commands
             }
 
@@ -171,7 +172,9 @@ async def cmd(cmd: Cmd):
             # CRITICAL: Enforce sessionId for all commands except INIT_ROUTE
             if cmd.type != "INIT_ROUTE":
                 if not cmd.sessionId:
-                    logger.warning(f"Command {cmd.type} for box {cmd.boxId} missing sessionId")
+                    logger.warning(
+                        f"Command {cmd.type} for box {cmd.boxId} missing sessionId"
+                    )
                     raise HTTPException(
                         status_code=400,
                         detail="sessionId required for all commands except INIT_ROUTE",
@@ -220,9 +223,13 @@ async def cmd(cmd: Cmd):
                         marked_val = comp.get("marked", False)
                         # Coerce to boolean if present
                         marked_bool = (
-                            bool(marked_val) if isinstance(marked_val, (bool, int, str)) else False
+                            bool(marked_val)
+                            if isinstance(marked_val, (bool, int, str))
+                            else False
                         )
-                        normalized_competitors.append({"nume": safe_name, "marked": marked_bool})
+                        normalized_competitors.append(
+                            {"nume": safe_name, "marked": marked_bool}
+                        )
                     except Exception:
                         # Silently skip malformed competitor entries
                         continue
@@ -255,7 +262,9 @@ async def cmd(cmd: Cmd):
         elif cmd.type == "PROGRESS_UPDATE":
             delta = cmd.delta or 1
             new_count = (
-                (int(sm["holdCount"]) + 1) if delta == 1 else round(sm["holdCount"] + delta, 1)
+                (int(sm["holdCount"]) + 1)
+                if delta == 1
+                else round(sm["holdCount"] + delta, 1)
             )
             # Clamp lower bound
             if new_count < 0:
@@ -367,7 +376,9 @@ async def _heartbeat(ws: WebSocket, box_id: int) -> None:
                 break
 
             # Send PING
-            await ws.send_text(json.dumps({"type": "PING", "timestamp": now}, ensure_ascii=False))
+            await ws.send_text(
+                json.dumps({"type": "PING", "timestamp": now}, ensure_ascii=False)
+            )
         except Exception as e:
             logger.debug(f"Heartbeat error for box {box_id}: {e}")
             break
@@ -436,7 +447,9 @@ async def websocket_endpoint(ws: WebSocket, box_id: int):
                     # NEW: Handle REQUEST_STATE command
                     if msg_type == "REQUEST_STATE":
                         requested_box_id = msg.get("boxId", box_id)
-                        logger.info(f"WebSocket REQUEST_STATE for box {requested_box_id}")
+                        logger.info(
+                            f"WebSocket REQUEST_STATE for box {requested_box_id}"
+                        )
                         await _send_state_snapshot(requested_box_id, targets={ws})
                         continue
 

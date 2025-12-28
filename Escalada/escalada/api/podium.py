@@ -27,7 +27,9 @@ async def get_podium(category: str):
     try:
         df = pd.read_excel(excel_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Eroare la citirea fișierului Excel: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Eroare la citirea fișierului Excel: {e}"
+        )
     # Presupunem că DataFrame-ul are coloana "Nume" și este deja sortat după tipărirea cu Rank
     top3 = df.head(3)
     colors = ["#ffd700", "#c0c0c0", "#cd7f32"]  # aur, argint, bronz
@@ -36,7 +38,8 @@ async def get_podium(category: str):
         name = getattr(row, "Nume", None) or getattr(row, "Name", None)
         if name is None:
             raise HTTPException(
-                status_code=500, detail="Excel file is missing required 'Nume' or 'Name' column"
+                status_code=500,
+                detail="Excel file is missing required 'Nume' or 'Name' column",
             )
         result.append({"name": name, "color": colors[idx]})
     return result

@@ -12,7 +12,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer, Table,
+                                TableStyle)
 
 # Register Unicode-capable font for diacritics
 # Try DejaVuSans first, then fallback to reportlab's built-in UnicodeCIDFont
@@ -90,7 +91,11 @@ def save_ranking(payload: RankingIn):
             route_list,
             key=lambda x: (
                 -x[1] if x[1] is not None else math.inf,
-                x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0),
+                (
+                    x[2]
+                    if (use_time and x[2] is not None)
+                    else (math.inf if use_time else 0)
+                ),
             ),
         )
 
@@ -103,7 +108,9 @@ def save_ranking(payload: RankingIn):
                 route_list_sorted[j]
                 for j in range(i, len(route_list_sorted))
                 if route_list_sorted[j][1] == route_list_sorted[i][1]
-                and (not use_time or (route_list_sorted[j][2] == route_list_sorted[i][2]))
+                and (
+                    not use_time or (route_list_sorted[j][2] == route_list_sorted[i][2])
+                )
             ]
             first = pos
             last = pos + len(same_score) - 1
@@ -180,7 +187,11 @@ def _build_overall_df(
             scored.sort(
                 key=lambda x: (
                     -x[1],
-                    x[2] if (use_time and x[2] is not None) else (math.inf if use_time else 0),
+                    (
+                        x[2]
+                        if (use_time and x[2] is not None)
+                        else (math.inf if use_time else 0)
+                    ),
                 )
             )
 
@@ -247,7 +258,9 @@ def _build_by_route_df(p: RankingIn) -> pd.DataFrame:
             score = arr[r] if r < len(arr) else None
             t_arr = times.get(name, [])
             tm = t_arr[r] if r < len(t_arr) else None
-            rows.append({"Route": r + 1, "Name": name, "Score": score, "Time": _format_time(tm)})
+            rows.append(
+                {"Route": r + 1, "Name": name, "Score": score, "Time": _format_time(tm)}
+            )
     return pd.DataFrame(rows)
 
 

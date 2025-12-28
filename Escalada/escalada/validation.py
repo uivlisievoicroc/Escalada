@@ -7,7 +7,8 @@ import logging
 import re
 from typing import Dict, List, Optional, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (BaseModel, ConfigDict, Field, field_validator,
+                      model_validator)
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,9 @@ class ValidatedCmd(BaseModel):
     """Enhanced Cmd model with comprehensive validation"""
 
     # Accept -1 as sentinel for global commands (e.g., SET_TIME_CRITERION)
-    boxId: int = Field(..., ge=-1, le=9999, description="Box ID (-1 for global, 0-9999 for boxes)")
+    boxId: int = Field(
+        ..., ge=-1, le=9999, description="Box ID (-1 for global, 0-9999 for boxes)"
+    )
     type: str = Field(..., min_length=1, max_length=50, description="Command type")
 
     # Generic optional fields with validation
@@ -34,8 +37,12 @@ class ValidatedCmd(BaseModel):
     )
 
     # INIT_ROUTE fields
-    routeIndex: Optional[int] = Field(None, gt=0, le=999, description="Route index (1-999)")
-    holdsCount: Optional[int] = Field(None, ge=0, le=100, description="Hold count (0-100)")
+    routeIndex: Optional[int] = Field(
+        None, gt=0, le=999, description="Route index (1-999)"
+    )
+    holdsCount: Optional[int] = Field(
+        None, ge=0, le=100, description="Hold count (0-100)"
+    )
     competitors: Optional[List[Dict]] = Field(None, description="Competitors list")
     categorie: Optional[str] = Field(None, max_length=100, description="Category name")
     timerPreset: Optional[str] = Field(
@@ -43,7 +50,9 @@ class ValidatedCmd(BaseModel):
     )
 
     # Timer sync
-    remaining: Optional[float] = Field(None, ge=0, le=9999, description="Remaining seconds")
+    remaining: Optional[float] = Field(
+        None, ge=0, le=9999, description="Remaining seconds"
+    )
 
     # Time criterion
     timeCriterionEnabled: Optional[bool] = None
@@ -131,7 +140,9 @@ class ValidatedCmd(BaseModel):
         v_upper = v.upper()
         for pattern in dangerous_patterns:
             if pattern.upper() in v_upper:
-                raise ValueError(f"competitor contains potentially dangerous pattern: {pattern}")
+                raise ValueError(
+                    f"competitor contains potentially dangerous pattern: {pattern}"
+                )
 
         # Block SQL injection with quotes (but allow apostrophes in names like O'Connor)
         if "'" in v and ("OR" in v_upper or "AND" in v_upper or "=" in v):
@@ -226,7 +237,9 @@ class ValidatedCmd(BaseModel):
             dangerous_patterns = ["--", "/*", "<script", "javascript:", "onerror="]
             for pattern in dangerous_patterns:
                 if pattern.upper() in name.upper():
-                    raise ValueError(f"competitor {i} contains dangerous pattern: {pattern}")
+                    raise ValueError(
+                        f"competitor {i} contains dangerous pattern: {pattern}"
+                    )
 
         return v
 
