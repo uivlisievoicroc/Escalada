@@ -46,7 +46,7 @@ jobs:
           poetry run pytest tests/ --cov=escalada --cov-report=html --cov-report=term-missing
       
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: backend-coverage-report
           path: Escalada/htmlcov/
@@ -62,7 +62,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: Escalada/escalada-ui/package-lock.json
       
@@ -84,7 +84,7 @@ jobs:
       
       - name: Upload test artifacts
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: frontend-test-reports
           path: Escalada/escalada-ui/playwright-report/
