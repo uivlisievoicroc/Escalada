@@ -12,6 +12,8 @@ from starlette.websockets import WebSocket
 from escalada.rate_limit import check_rate_limit
 # Import validation and rate limiting
 from escalada.validation import InputSanitizer, ValidatedCmd
+from escalada.db.database import AsyncSessionLocal
+from escalada.db.repositories import BoxRepository, EventRepository
 
 logger = logging.getLogger(__name__)
 
@@ -140,28 +142,7 @@ async def cmd(cmd: Cmd):
     # Lock state access for this boxId
     async with lock:
         # Initialize state INSIDE the lock (no window for race condition)
-        if cmd.boxId not in state_map:
-            import uuid
-
-            state_map[cmd.boxId] = {
-                "initiated": False,
-                "holdsCount": 0,
-                "currentClimber": "",
-                "started": False,
-                "timerState": "idle",
-                "holdCount": 0.0,
-                "routeIndex": 1,
-                "competitors": [],
-                "categorie": "",
-                "lastRegisteredTime": None,
-                "remaining": None,
-                "timerPreset": None,
-                "timerPresetSec": None,
-                "sessionId": str(
-                    uuid.uuid4()
-                ),  # Generated at creation, not at INIT_ROUTE
-                "boxVersion": 0,  # Incremented on INIT_ROUTE to prevent stale commands
-            }
+        sm = await _ensure_state(cmd.boxId)
 
         # Update server-side state snapshot
         sm = state_map[cmd.boxId]
@@ -337,6 +318,12 @@ async def cmd(cmd: Cmd):
             return {"status": "ok"}
         # else: leave previous state for other types
 
+        # Persist snapshot + audit log for state-changing commands
+        if cmd.type != "REQUEST_STATE":
+            persist_result = await _persist_state(cmd.boxId, sm, cmd.type, cmd.model_dump())
+            if persist_result == "stale":
+                return {"status": "ignored", "reason": "stale_version"}
+
         # Broadcast command echo to all active WebSockets for this box
         await _broadcast_to_box(cmd.boxId, cmd.model_dump())
 
@@ -495,26 +482,7 @@ async def get_state(box_id: int):
     async with init_lock:
         if box_id not in state_locks:
             state_locks[box_id] = asyncio.Lock()
-        if box_id not in state_map:
-            # Create default state with sessionId in advance
-            import uuid
-
-            state_map[box_id] = {
-                "initiated": False,
-                "holdsCount": 0,
-                "currentClimber": "",
-                "started": False,
-                "timerState": "idle",
-                "holdCount": 0.0,
-                "routeIndex": 1,
-                "competitors": [],
-                "categorie": "",
-                "lastRegisteredTime": None,
-                "remaining": None,
-                "timerPreset": None,
-                "timerPresetSec": None,
-                "sessionId": str(uuid.uuid4()),  # Generated for new boxes
-            }
+    await _ensure_state(box_id)
 
     state = state_map[box_id]
     return _build_snapshot(box_id, state)
@@ -546,25 +514,9 @@ def _build_snapshot(box_id: int, state: dict) -> dict:
 async def _send_state_snapshot(box_id: int, targets: set[WebSocket] | None = None):
     # Ensure state exists before sending snapshot
     async with init_lock:
-        if box_id not in state_map:
-            import uuid
-
-            state_map[box_id] = {
-                "initiated": False,
-                "holdsCount": 0,
-                "currentClimber": "",
-                "started": False,
-                "timerState": "idle",
-                "holdCount": 0.0,
-                "routeIndex": 1,
-                "competitors": [],
-                "categorie": "",
-                "lastRegisteredTime": None,
-                "remaining": None,
-                "timerPreset": None,
-                "timerPresetSec": None,
-                "sessionId": str(uuid.uuid4()),
-            }
+        if box_id not in state_locks:
+            state_locks[box_id] = asyncio.Lock()
+    await _ensure_state(box_id)
 
     state = state_map.get(box_id)
     if state is None:
@@ -581,6 +533,116 @@ async def _send_state_snapshot(box_id: int, targets: set[WebSocket] | None = Non
     else:
         # Otherwise broadcast to all subscribers on this box
         await _broadcast_to_box(box_id, payload)
+
+
+async def _ensure_state(box_id: int) -> dict:
+    """Ensure in-memory state exists, hydrated from DB when possible."""
+    async with init_lock:
+        existing = state_map.get(box_id)
+        if existing is not None:
+            return existing
+
+    # Try to hydrate from database
+    persisted = None
+    session_id = None
+    box_version = 0
+    try:
+        async with AsyncSessionLocal() as session:
+            repo = BoxRepository(session)
+            box = await repo.get_by_id(box_id)
+            if box:
+                persisted = box.state or {}
+                session_id = box.session_id
+                box_version = box.box_version or 0
+    except Exception as e:
+        logger.warning(f"Failed to hydrate box {box_id} from DB: {e}")
+
+    state = _default_state(session_id)
+    state.update(persisted or {})
+    state["boxVersion"] = box_version
+    if not state.get("sessionId"):
+        state["sessionId"] = state.get("sessionId") or _default_state()["sessionId"]
+
+    async with init_lock:
+        state_map[box_id] = state
+    return state
+
+
+async def _persist_state(box_id: int, state: dict, action: str, payload: dict) -> str:
+    """
+    Persist snapshot + audit event.
+    Returns: "ok", "stale", "missing_box", or "error".
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            box_repo = BoxRepository(session)
+            event_repo = EventRepository(session)
+
+            box = await box_repo.get_by_id(box_id)
+            if not box:
+                logger.warning(f"Box {box_id} not found in DB; skipping persistence")
+                return "missing_box"
+
+            current_db_version = box.box_version or 0
+            updated_box, success = await box_repo.update_state_with_version(
+                box_id=box_id,
+                current_version=current_db_version,
+                new_state=state,
+                new_session_id=state.get("sessionId"),
+            )
+
+            if not success:
+                # Refresh in-memory state with authoritative DB snapshot
+                await box_repo.refresh(box)
+                authoritative = box.state or _default_state(box.session_id)
+                authoritative["boxVersion"] = box.box_version
+                if box.session_id:
+                    authoritative["sessionId"] = box.session_id
+                async with init_lock:
+                    state_map[box_id] = authoritative
+                return "stale"
+
+            # Sync in-memory version/session with DB after successful update
+            state["boxVersion"] = updated_box.box_version
+            if updated_box.session_id:
+                state["sessionId"] = updated_box.session_id
+
+            await event_repo.log_event(
+                competition_id=updated_box.competition_id,
+                action=action,
+                payload=payload,
+                box_id=updated_box.id,
+                session_id=state.get("sessionId"),
+                box_version=state.get("boxVersion", 0) or 0,
+                action_id=payload.get("actionId") if isinstance(payload, dict) else None,
+            )
+            await session.commit()
+            return "ok"
+    except Exception as e:
+        logger.warning(f"Failed to persist state for box {box_id}: {e}")
+        return "error"
+
+
+def _default_state(session_id: str | None = None) -> dict:
+    import uuid
+
+    return {
+        "initiated": False,
+        "holdsCount": 0,
+        "currentClimber": "",
+        "started": False,
+        "timerState": "idle",
+        "holdCount": 0.0,
+        "routeIndex": 1,
+        "competitors": [],
+        "categorie": "",
+        "lastRegisteredTime": None,
+        "remaining": None,
+        "timerPreset": None,
+        "timerPresetSec": None,
+        "sessionId": session_id or str(uuid.uuid4()),
+        "boxVersion": 0,
+    }
 
 
 def _parse_timer_preset(preset: str | None) -> int | None:

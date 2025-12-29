@@ -99,12 +99,20 @@ npm run dev  # Vite dev server with HMR
 
 ### Testing
 ```bash
-# Backend tests (pytest + Vitest3 tests (1 skipped) covering validation, rate limiting, security
+# Backend tests (pytest)
+cd Escalada
+poetry run pytest tests -v --tb=short  # 93 tests covering validation, rate limiting, security
 
-# Frontend tests (Vitest + React Testing Library)
+# Frontend unit tests (Vitest + React Testing Library)
 cd Escalada/escalada-ui
 npm test  # 45 tests for state management, messaging, control panel flows
-npm run test:coverage  # Coverage report
+npm run test:coverage  # Coverage report with V8
+
+# E2E tests (Playwright)
+cd Escalada/escalada-ui
+npm run test:e2e  # Full browser automation tests
+npm run test:e2e:ui  # Interactive UI mode
+npm run test:e2e:debug  # Debug mode with inspector
 ```
 
 ### Key Testing Patterns
@@ -113,11 +121,11 @@ npm run test:coverage  # Coverage report
 - **State tests**: `useAppState.test.jsx` validates Context provider, localStorage persistence, cross-tab sync
 - **Integration**: `test_live.py` validates command processing with 48 test cases
 - **Regression**: `ContestPage.test.jsx` validates JSON.parse edge cases (10 tests) for jsdom
-- **State tests**: `useAppState.test.jsx` validates Context provider, localStorage persistence, cross-tab sync
-- **Integration**: `test_live.py` validates command processing with 48 test cases
+- **E2E**: Playwright tests in `e2e/` cover multi-tab sync, WebSocket flows, contest scenarios
 
 ## File Conventions
-TypeScript Frontend
+
+### TypeScript Frontend
 - **Components**: PascalCase with .tsx extension (ControlPanel.tsx, JudgePage.tsx, ContestPage.tsx)
 - **Utilities**: camelCase in `utilis/` directory (note: typo kept for consistency)
 - **Type definitions**: `src/types/index.ts` with comprehensive interfaces (Box, Competitor, WebSocketMessage, etc.)
@@ -130,8 +138,18 @@ TypeScript Frontend
 - **Naming**: Snake_case for files/functions (FastAPI standard)
 - **Logging**: Use module-level `logger = logging.getLogger(__name__)` - logs to `escalada.log` + stdout
 - **Async**: All WebSocket/state handlers use `async def` with asyncio locks
-- **Type hints**: Use modern Python 3.11+ syntax (`int | None` instead of `Optional[int]`
-- **Refs**: Store latest state in refs when accessed in closures/effects (see `ControlPanel.jsx` lines 105-125)
+- **Type hints**: Use modern Python 3.11+ syntax (`int | None` instead of `Optional[int]`)
+- **Dependency management**: Poetry with `pyproject.toml` - use `poetry add <package>` for new deps
+
+### Code Formatting (Pre-commit Hooks)
+- **Backend**: Black (line-length 100) + isort (--profile black) enforced via `.pre-commit-config.yaml`
+- **Frontend**: Prettier via lint-staged (configured in package.json)
+- **Git hook**: `.husky/pre-commit` runs both formatters on staged files automatically
+- **Manual formatting**: 
+  ```bash
+  # Backend: cd Escalada && poetry run pre-commit run --all-files
+  # Frontend: cd Escalada/escalada-ui && npm run format
+  ```
 
 ### Dynamic API Configuration
 Never hardcode `localhost:8000`. Use runtime protocol/hostname:
@@ -163,7 +181,9 @@ if (!trimmed || trimmed === '""' || trimmed === 'null' || trimmed === 'undefined
   return; // Don't send command
 }
 ```
-**WhShared TypeScript Types (src/types/index.ts)
+**Why:** Other tabs might write `JSON.stringify("")` which appears non-empty (`'""'` = 2 chars) but backend rejects as empty after validation. This prevents 400 errors on ACTIVE_CLIMBER and similar commands.
+
+### Shared TypeScript Types (src/types/index.ts)
 ```typescript
 interface Box {
   idx: number;  // Box ID (array index)
@@ -194,8 +214,6 @@ type TimerState = "idle" | "running" | "paused";
 type LoadingBoxes = Set<number>;
 ```
 
-### y:** Other tabs might write `JSON.stringify("")` which appears non-empty (`'""'` = 2 chars) but backend rejects as empty after validation. This prevents 400 errors on ACTIVE_CLIMBER and similar commands.
-
 ## Data Model
 
 ### Box Configuration (localStorage `listboxes`)
@@ -218,20 +236,16 @@ type LoadingBoxes = Set<number>;
     "initiated": False,  # Route initialized
     "holdsCount": 0,
     "currentClimber": "",
-    "started": F3 backend + 45 frontend tests with full coverage of validation/rate limiting
-- **TypeScript Migration**: Converted 3165 lines (ControlPanel, JudgePage, ContestPage) to TypeScript
-  - Created shared type definitions in src/types/index.ts
-  - Full generic types for useState, useRef, callbacks, event handlers
-  - Type-safe window.postMessage and WebSocket messages
-  - Zero regressions - all 45 frontend tests passing
-- **Bug Fixes**: Next Route button guard for single-route boxes, CORS regex configurability
-- **State Bleed Prevention** (Dec 24): Session ID invalidation blocks phantom commands from old Judge tabs
+    "started": False,  # Timer started
+    "paused": False,  # Timer paused
+    "progress": 0.0,  # Current holds climbed
+    "elapsedTime": 0.0,  # Seconds elapsed
+    "boxVersion": 1,  # Increments on state reset
+    "sessionId": "uuid-string",  # Session token for invalidation
+    # ... additional fields
+}
+```
 
-## References
-- **API Documentation**: See `FINAL_REPORT.md` for full feature list and test coverage (138 tests total)
-- **Bug History**: `BUGFIX_NEXT_ROUTE_AND_CORS.md`, `BUGFIX_SUMMARY.md` for resolved issues
-- **Test Examples**: `tests/test_live.py` (backend), `escalada-ui/src/__tests__/` (frontend)
-- **TypeScript Types**: `escalada-ui/src/types/index.ts` for shared interface definitions
 ## Common Tasks
 
 ### Adding New Command Type
@@ -258,11 +272,17 @@ limiter.set_command_limit('PROGRESS_UPDATE', 120)  # 120/min for progress update
 - **Security**: Comprehensive OWASP Top 10 coverage with 11 vulnerability fixes
 - **Reliability**: WebSocket heartbeat + auto-reconnect (99.9% uptime)
 - **State Management**: Consolidated into AppStateProvider (eliminated fragmentation)
-- **Testing**: 91 backend + 28 frontend tests with full coverage of validation/rate limiting
+- **Testing**: 93 backend + 45 frontend tests with full coverage of validation/rate limiting
+- **TypeScript Migration**: Converted 3165 lines (ControlPanel, JudgePage, ContestPage) to TypeScript
+  - Created shared type definitions in src/types/index.ts
+  - Full generic types for useState, useRef, callbacks, event handlers
+  - Type-safe window.postMessage and WebSocket messages
+  - Zero regressions - all 45 frontend tests passing
 - **Bug Fixes**: Next Route button guard for single-route boxes, CORS regex configurability
 - **State Bleed Prevention** (Dec 24): Session ID invalidation blocks phantom commands from old Judge tabs
 
 ## References
-- **API Documentation**: See `FINAL_REPORT.md` for full feature list and test coverage
+- **API Documentation**: See `FINAL_REPORT.md` for full feature list and test coverage (138 tests total)
 - **Bug History**: `BUGFIX_NEXT_ROUTE_AND_CORS.md`, `BUGFIX_SUMMARY.md` for resolved issues
 - **Test Examples**: `tests/test_live.py` (backend), `escalada-ui/src/__tests__/` (frontend)
+- **TypeScript Types**: `escalada-ui/src/types/index.ts` for shared interface definitions
