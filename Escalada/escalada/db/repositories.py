@@ -117,12 +117,14 @@ class CompetitorRepository:
         self,
         competition_id: int,
         name: str,
+        box_id: int | None = None,
         category: str | None = None,
         bib: str | None = None,
         seed: int | None = None,
     ) -> Competitor:
         competitor = Competitor(
             competition_id=competition_id,
+            box_id=box_id,
             name=name,
             category=category,
             bib=bib,

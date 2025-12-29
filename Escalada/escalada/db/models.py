@@ -91,6 +91,9 @@ class Competitor(Base):
     competition_id: Mapped[int] = mapped_column(
         ForeignKey("competitions.id", ondelete="CASCADE"), index=True
     )
+    box_id: Mapped[int | None] = mapped_column(
+        ForeignKey("boxes.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     name: Mapped[str] = mapped_column(String(120))
     category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     bib: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)

@@ -2,11 +2,15 @@
 Database integration tests covering versioning, dedup, and constraints.
 """
 import pytest
+import pytest_asyncio
 import uuid
 from sqlalchemy import select, and_
 from sqlalchemy.exc import IntegrityError
 
-from escalada.db.database import AsyncSessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from escalada.db.config import settings
 from escalada.db.models import Competition, Box, Competitor, Event
 from escalada.db.repositories import (
     CompetitionRepository,
@@ -14,13 +18,34 @@ from escalada.db.repositories import (
     CompetitorRepository,
     EventRepository,
 )
+from sqlalchemy import text
+
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
-@pytest.fixture
+def _make_sessionmaker():
+    """Create an isolated sessionmaker and engine for test usage."""
+    engine = create_async_engine(
+        settings.database_url, poolclass=NullPool, pool_pre_ping=True
+    )
+    SessionMaker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, SessionMaker
+
+
+@pytest_asyncio.fixture
 async def db_session():
-    """Provide a test database session."""
-    async with AsyncSessionLocal() as session:
+    """Provide a clean test database session with isolated engine per test."""
+    engine, SessionMaker = _make_sessionmaker()
+    async with SessionMaker() as session:
+        await session.execute(
+            text(
+                "TRUNCATE events, competitors, boxes, competitions RESTART IDENTITY CASCADE"
+            )
+        )
+        await session.commit()
         yield session
+        await session.rollback()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -146,8 +171,9 @@ async def test_seed_idempotent():
     # First run
     await seed()
 
+    engine, SessionMaker = _make_sessionmaker()
     # Get initial counts
-    async with AsyncSessionLocal() as session:
+    async with SessionMaker() as session:
         comp_result = await session.execute(
             select(Competition).where(Competition.name == "Demo 2026")
         )
@@ -166,7 +192,7 @@ async def test_seed_idempotent():
     await seed()
 
     # Counts should be the same
-    async with AsyncSessionLocal() as session:
+    async with SessionMaker() as session:
         boxes = await session.execute(select(Box).where(Box.competition_id == comp.id))
         box_count2 = len(boxes.scalars().all())
 
@@ -177,3 +203,4 @@ async def test_seed_idempotent():
 
     assert box_count1 == box_count2
     assert comp_count1 == comp_count2
+    await engine.dispose()

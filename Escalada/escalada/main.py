@@ -4,16 +4,18 @@ import sys
 from contextlib import asynccontextmanager
 from time import time
 
-from fastapi import FastAPI, Depends
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from escalada.api.live import router as live_router
 from escalada.api.podium import router as podium_router
 from escalada.api.save_ranking import router as save_ranking_router
-from escalada.routers.upload import router as upload_router
 from escalada.db.database import get_session
 from escalada.db.health import health_check_db
+from escalada.db.models import Box, Competition, Event
+from escalada.routers.upload import router as upload_router
 
 # Configure logging
 logging.basicConfig(
@@ -92,6 +94,21 @@ async def log_requests(request, call_next):
 async def health(session: AsyncSession = Depends(get_session)):
     """Health check endpoint with database connectivity."""
     return await health_check_db(session)
+
+
+@app.get("/status/summary")
+async def status_summary(session: AsyncSession = Depends(get_session)):
+    """Lightweight counts to confirm persistence is working."""
+    comps_count = await session.scalar(select(func.count(Competition.id)))
+    boxes_count = await session.scalar(select(func.count(Box.id)))
+    events_count = await session.scalar(select(func.count(Event.id)))
+    last_event = await session.scalar(select(func.max(Event.created_at)))
+    return {
+        "competitions": comps_count or 0,
+        "boxes": boxes_count or 0,
+        "events": events_count or 0,
+        "last_event_at": last_event.isoformat() if last_event else None,
+    }
 
 
 app.include_router(upload_router, prefix="/api")

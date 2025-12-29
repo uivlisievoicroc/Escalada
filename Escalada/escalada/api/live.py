@@ -13,7 +13,11 @@ from escalada.rate_limit import check_rate_limit
 # Import validation and rate limiting
 from escalada.validation import InputSanitizer, ValidatedCmd
 from escalada.db.database import AsyncSessionLocal
-from escalada.db.repositories import BoxRepository, EventRepository
+from escalada.db.repositories import (
+    BoxRepository,
+    CompetitionRepository,
+    EventRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -576,12 +580,23 @@ async def _persist_state(box_id: int, state: dict, action: str, payload: dict) -
     try:
         async with AsyncSessionLocal() as session:
             box_repo = BoxRepository(session)
+            comp_repo = CompetitionRepository(session)
             event_repo = EventRepository(session)
 
             box = await box_repo.get_by_id(box_id)
             if not box:
-                logger.warning(f"Box {box_id} not found in DB; skipping persistence")
-                return "missing_box"
+                # Create a default competition/box so we don't drop events for new boxes
+                comp = await comp_repo.get_by_name("Runtime Default")
+                if not comp:
+                    comp = await comp_repo.create(name="Runtime Default")
+                box = await box_repo.create(
+                    competition_id=comp.id,
+                    name=f"Box {box_id}",
+                    route_index=state.get("routeIndex", 1) or 1,
+                    routes_count=state.get("routesCount", 1) or 1,
+                    holds_count=state.get("holdsCount", 0) or 0,
+                )
+                await session.flush()
 
             current_db_version = box.box_version or 0
             updated_box, success = await box_repo.update_state_with_version(

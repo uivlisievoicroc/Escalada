@@ -65,6 +65,7 @@ async def seed():
                 if not result.scalar_one_or_none():
                     await competitor_repo.create(
                         competition_id=comp.id,
+                        box_id=box.id,
                         name=comp_name,
                         category="Seniori",
                         bib=f"{box_idx:02d}{comp_idx:02d}",

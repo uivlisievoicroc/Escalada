@@ -74,6 +74,7 @@ def upgrade() -> None:
         "competitors",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("competition_id", sa.Integer(), sa.ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("box_id", sa.Integer(), sa.ForeignKey("boxes.id", ondelete="CASCADE"), nullable=True),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("category", sa.String(length=50), nullable=True),
         sa.Column("bib", sa.String(length=20), nullable=True),
@@ -101,6 +102,12 @@ def upgrade() -> None:
         op.f("ix_competitors_competition_id"),
         "competitors",
         ["competition_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_competitors_box_id"),
+        "competitors",
+        ["box_id"],
         unique=False,
     )
 
@@ -174,6 +181,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_events_action"), table_name="events")
     op.drop_table("events")
     op.drop_index(op.f("ix_competitors_competition_id"), table_name="competitors")
+    op.drop_index(op.f("ix_competitors_box_id"), table_name="competitors")
     op.drop_index(op.f("ix_competitors_bib"), table_name="competitors")
     op.drop_table("competitors")
     op.drop_index(op.f("ix_boxes_session_id"), table_name="boxes")
