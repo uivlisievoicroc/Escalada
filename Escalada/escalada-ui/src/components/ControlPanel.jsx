@@ -325,7 +325,14 @@ const ControlPanel = () => {
         // Create WebSocket connection with heartbeat using a custom implementation
         // that manually manages the connection to fit our multi-box pattern
         const config = getApiConfig();
-        const url = `${config.WS_PROTOCOL_CP}://${window.location.hostname}:8000/api/ws/${idx}`;
+        const token = getStoredToken();
+        if (!token) {
+          debugWarn(`Skipping WS connect for box ${idx}: no auth token`);
+          return;
+        }
+        const url = `${config.WS_PROTOCOL_CP}://${window.location.hostname}:8000/api/ws/${idx}?token=${encodeURIComponent(
+          token,
+        )}`;
         const ws = new WebSocket(url);
         let heartbeatInterval = null;
         let lastPong = Date.now();

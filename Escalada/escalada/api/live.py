@@ -14,7 +14,12 @@ from escalada.rate_limit import check_rate_limit
 from escalada.validation import InputSanitizer, ValidatedCmd
 from escalada.db.database import AsyncSessionLocal
 from escalada.db import repositories as repos
-from escalada.auth.deps import require_box_access, require_view_access
+from escalada.auth.deps import (
+    require_box_access,
+    require_view_access,
+    require_view_box_access,
+)
+from escalada.auth.service import decode_token
 
 logger = logging.getLogger(__name__)
 
@@ -395,8 +400,37 @@ async def _broadcast_to_box(box_id: int, payload: dict) -> None:
                 channels.get(box_id, set()).discard(ws)
 
 
+def _authorize_ws(box_id: int, claims: dict) -> bool:
+    """Return True if claims allow subscription to box_id."""
+    role = claims.get("role")
+    if role == "admin":
+        return True
+    boxes = set(claims.get("boxes") or [])
+    if role == "judge":
+        return int(box_id) in boxes
+    if role == "viewer":
+        # Allow viewers; if boxes are specified, enforce membership
+        return not boxes or int(box_id) in boxes
+    return False
+
+
 @router.websocket("/ws/{box_id}")
 async def websocket_endpoint(ws: WebSocket, box_id: int):
+    token = ws.query_params.get("token")
+    if not token:
+        await ws.close(code=4401, reason="token_required")
+        return
+
+    try:
+        claims = decode_token(token)
+    except HTTPException as exc:
+        await ws.close(code=4401, reason=exc.detail or "invalid_token")
+        return
+
+    if not _authorize_ws(box_id, claims):
+        await ws.close(code=4403, reason="forbidden_box_or_role")
+        return
+
     await ws.accept()
 
     # Atomically add to channel
@@ -473,7 +507,7 @@ from fastapi import HTTPException
 
 
 @router.get("/state/{box_id}")
-async def get_state(box_id: int, claims=Depends(require_view_access)):
+async def get_state(box_id: int, claims=Depends(require_view_box_access())):
     """
     Return current contest state for a judge client.
     Create a placeholder state with sessionId if box doesn't exist yet.

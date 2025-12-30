@@ -5,6 +5,7 @@ import { useParams } from 'react-router-dom';
 import { debugLog, debugError } from '../utilis/debug';
 import { safeSetItem, safeGetItem, safeRemoveItem } from '../utilis/storage';
 import { sanitizeBoxName, sanitizeCompetitorName } from '../utilis/sanitize';
+import { getStoredToken } from '../utilis/auth';
 // (WebSocket logic moved into component)
 
 const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
@@ -176,7 +177,10 @@ const ContestPage = () => {
   useEffect(() => {
     reconnectRef.current.shouldReconnect = true;
 
-    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${boxId}`;
+    const token = getStoredToken();
+    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${boxId}${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`;
 
     const handleMessage = (msg) => {
       if (msg.type === 'INIT_ROUTE') {

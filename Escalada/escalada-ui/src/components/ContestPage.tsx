@@ -6,6 +6,7 @@ import { debugLog, debugError } from '../utilis/debug';
 import type { Box, Competitor, RankingRow, WebSocketMessage } from '../types';
 import { safeSetItem, safeGetItem, safeRemoveItem } from '../utilis/storage';
 import { sanitizeBoxName, sanitizeCompetitorName } from '../utilis/sanitize';
+import { getStoredToken } from '../utilis/auth';
 import type { Box, Competitor, RankingRow, WebSocketMessage } from '../types';
 // (WebSocket logic moved into component)
 
@@ -253,7 +254,10 @@ const ContestPage: FC = () => {
   useEffect(() => {
     reconnectRef.current.shouldReconnect = true;
 
-    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${boxId}`;
+    const token = getStoredToken();
+    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${boxId}${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`;
 
     const handleMessage = (msg: WebSocketMessage) => {
       if (msg.type === 'INIT_ROUTE') {

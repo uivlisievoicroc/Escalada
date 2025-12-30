@@ -13,6 +13,7 @@ import {
 import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
 import { debugLog, debugError } from '../utilis/debug';
 import { safeSetItem, safeGetItem, safeRemoveItem, storageKey } from '../utilis/storage';
+import { getStoredToken } from '../utilis/auth';
 import type { WebSocketMessage, TimerState, StateSnapshot } from '../types';
 import ModalScore from './ModalScore';
 import ModalModifyScore from './ModalModifyScore';
@@ -101,7 +102,10 @@ const JudgePage: FC = () => {
 
   // Build WebSocket URL - memoized to prevent infinite render loop
   const WS_URL = useMemo(() => {
-    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}`;
+    const token = getStoredToken();
+    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`;
     debugLog('🟡 [JudgePage] WS_URL memoized:', url);
     return url;
   }, [idx, WS_PROTOCOL]);

@@ -2,9 +2,10 @@ from io import BytesIO
 from zipfile import BadZipFile
 
 import openpyxl
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 router = APIRouter(tags=["upload"])
+from escalada.auth.deps import require_role
 
 
 @router.post("/upload")
@@ -14,6 +15,7 @@ async def upload_listbox(
     holdsCounts: str = Form(...),
     file: UploadFile = File(...),
     include_clubs: str = Form(default="true"),
+    claims=Depends(require_role(["admin"])),
 ):
     """Upload competition data from Excel file."""
     # verific MIME

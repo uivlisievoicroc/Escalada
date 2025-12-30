@@ -63,3 +63,30 @@ async def require_box_access(
 
 async def require_view_access(claims: Dict[str, Any] = Depends(require_role(["viewer", "judge", "admin"]))) -> Dict[str, Any]:
     return claims
+
+
+def require_view_box_access(param_name: str = "box_id"):
+    """
+    Allow viewer/judge/admin; if boxes are specified in claims, enforce membership.
+    Admin bypasses box checks.
+    """
+
+    async def checker(
+        request: Request,
+        claims: Dict[str, Any] = Depends(require_role(["viewer", "judge", "admin"])),
+    ) -> Dict[str, Any]:
+        if claims.get("role") == "admin":
+            return claims
+
+        allowed_boxes = set(claims.get("boxes") or [])
+        box_id = request.path_params.get(param_name)
+
+        # If caller has an explicit allow-list, enforce membership
+        if allowed_boxes and (box_id is None or int(box_id) not in allowed_boxes):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="forbidden_box",
+            )
+        return claims
+
+    return checker

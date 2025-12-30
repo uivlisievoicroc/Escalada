@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -43,6 +43,8 @@ except Exception as e:
     )
     DEFAULT_FONT = "Helvetica"
 
+from escalada.auth.deps import require_role
+
 router = APIRouter()
 
 
@@ -58,7 +60,7 @@ class RankingIn(BaseModel):
 
 
 @router.post("/save_ranking")
-def save_ranking(payload: RankingIn):
+def save_ranking(payload: RankingIn, claims=Depends(require_role(["admin"]))):
     cat_dir = Path("escalada/clasamente") / payload.categorie
     cat_dir.mkdir(parents=True, exist_ok=True)
     raw_times = payload.times or {}

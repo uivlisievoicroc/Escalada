@@ -110,10 +110,13 @@ const JudgePage = () => {
 
   // Build WebSocket URL - memoized to prevent infinite render loop
   const WS_URL = useMemo(() => {
-    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}`;
+    const token = getStoredToken();
+    const url = `${WS_PROTOCOL}://${window.location.hostname}:8000/api/ws/${idx}${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`;
     debugLog('🟡 [JudgePage] WS_URL memoized:', url);
     return url;
-  }, [idx, WS_PROTOCOL]);
+  }, [idx, WS_PROTOCOL, authToken]);
 
   // Message handler for all incoming WS messages
   const handleWsMessage = useCallback(
