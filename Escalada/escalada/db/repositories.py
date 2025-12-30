@@ -5,7 +5,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
-from .models import Box, Competition, Competitor, Event
+from .models import Box, Competition, Competitor, Event, User
 
 
 class CompetitionRepository:
@@ -206,3 +206,57 @@ class EventRepository:
         query = query.order_by(Event.created_at.asc())
         result = await self.session.execute(query)
         return result.scalars().all()
+
+
+class UserRepository:
+    @staticmethod
+    async def get_by_username(session: AsyncSession, username: str) -> User | None:
+        result = await session.execute(select(User).where(User.username == username))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def create_user(
+        session: AsyncSession,
+        username: str,
+        password_hash: str,
+        role: str = "viewer",
+        assigned_boxes: list[int] | None = None,
+        is_active: bool = True,
+    ) -> User:
+        user = User(
+            username=username,
+            password_hash=password_hash,
+            role=role,
+            assigned_boxes=assigned_boxes or [],
+            is_active=is_active,
+        )
+        session.add(user)
+        await session.flush()
+        return user
+
+    @staticmethod
+    async def upsert_judge(
+        session: AsyncSession,
+        box_id: int,
+        password_hash: str,
+        username: str | None = None,
+    ) -> User:
+        """Create or update judge user for a box."""
+        username = username or f"Box {box_id}"
+        user = await UserRepository.get_by_username(session, username)
+        if not user:
+            user = User(
+                username=username,
+                password_hash=password_hash,
+                role="judge",
+                assigned_boxes=[box_id],
+                is_active=True,
+            )
+            session.add(user)
+        else:
+            user.password_hash = password_hash
+            user.role = "judge"
+            user.assigned_boxes = [box_id]
+            user.is_active = True
+        await session.flush()
+        return user

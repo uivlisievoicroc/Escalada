@@ -22,6 +22,8 @@ import ModalModifyScore from './ModalModifyScore';
 import getWinners from '../utilis/getWinners';
 import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
 import { normalizeStorageValue } from '../utilis/normalizeStorageValue';
+import { login, getStoredToken, setJudgePassword, clearAuth, getAuthHeader } from '../utilis/auth';
+import LoginOverlay from './LoginOverlay';
 
 // Map boxId -> reference to the opened contest tab
 const openTabs = {};
@@ -119,6 +121,9 @@ const ControlPanel = () => {
   const [holdClicks, setHoldClicks] = useState({});
   const [usedHalfHold, setUsedHalfHold] = useState({});
   const [registeredTimes, setRegisteredTimes] = useState({});
+  const [magicLinks, setMagicLinks] = useState({});
+  const [adminToken, setAdminToken] = useState(() => getStoredToken());
+  const [showAdminLogin, setShowAdminLogin] = useState(() => !getStoredToken());
   const registeredTimesRef = useRef(registeredTimes);
   useEffect(() => {
     registeredTimesRef.current = registeredTimes;
@@ -162,7 +167,7 @@ const ControlPanel = () => {
       const config = getApiConfig();
       await fetch(config.API_CP, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({
           boxId: -1,
           type: 'SET_TIME_CRITERION',
@@ -185,10 +190,14 @@ const ControlPanel = () => {
   // Ensure we always have a fresh sessionId per box (needed for state isolation)
   useEffect(() => {
     const config = getApiConfig();
+    const headers = getAuthHeader();
+    if (!headers.Authorization) return;
     listboxes.forEach((_, idx) => {
       (async () => {
         try {
-          const res = await fetch(`${config.API_CP.replace('/cmd', '')}/state/${idx}`);
+          const res = await fetch(`${config.API_CP.replace('/cmd', '')}/state/${idx}`, {
+            headers,
+          });
           if (res.ok) {
             const st = await res.json();
             if (st?.sessionId) {
@@ -1257,8 +1266,73 @@ const ControlPanel = () => {
       });
   };
 
+  const handleGenerateQr = (idx) => {
+    const cat = listboxes[idx]?.categorie;
+    const catParam = cat ? `?cat=${encodeURIComponent(cat)}` : '';
+    const url = `${window.location.origin}/#/judge/${idx}${catParam}`;
+    setMagicLinks((prev) => ({ ...prev, [idx]: { url } }));
+    debugLog('QR generated (link with category) for box', idx, 'cat:', cat);
+  };
+  const handleSetJudgePassword = async (idx) => {
+    const box = listboxes[idx];
+    const username = (box?.categorie || `Box ${idx}`).trim();
+    const pwd = window.prompt(`Setează parola pentru ${username}:`);
+    if (!pwd) return;
+    try {
+      await setJudgePassword(idx, pwd, username);
+      alert(`Parola pentru ${username} a fost setată.`);
+    } catch (err) {
+      debugError('Failed to set judge password', err);
+      if (err.message === 'auth_required') {
+        alert('Nu ești autentificat ca admin. Reloghează-te.');
+        clearAuth();
+        setAdminToken(null);
+        setShowAdminLogin(true);
+      } else {
+        alert('Nu am putut seta parola. Verifică dacă ești logat ca admin.');
+      }
+    }
+  };
+  // Asigură login admin la pornire (pentru generare token/QR)
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (!adminToken) {
+        setShowAdminLogin(true);
+        return;
+      }
+      try {
+        const { API_CP } = getApiConfig();
+        const apiBase = API_CP.replace('/cmd', '');
+        const res = await fetch(`${apiBase}/auth/me`, {
+          headers: { ...getAuthHeader() },
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data = await res.json();
+        if (data.role !== 'admin') {
+          throw new Error('not_admin');
+        }
+        setShowAdminLogin(false);
+      } catch (err) {
+        clearAuth();
+        setAdminToken(null);
+        setShowAdminLogin(true);
+      }
+    };
+    checkAuth();
+  }, [adminToken]);
+
   return (
     <div className="p-6">
+      {showAdminLogin && (
+        <LoginOverlay
+          defaultUsername="admin"
+          onSuccess={async () => {
+            // după login, salvăm token-ul și ascundem overlay
+            setAdminToken(getStoredToken());
+            setShowAdminLogin(false);
+          }}
+        />
+      )}
       <div className="w-full max-w-md mx-auto">
         <h1 className="text-3xl font-bold text-center mb-6">Control Panel</h1>
         <div className="flex gap-2 justify-center mb-4">
@@ -1295,7 +1369,8 @@ const ControlPanel = () => {
 
       <div className="mt-6 flex flex-nowrap gap-4 overflow-x-auto">
         {listboxes.map((lb, idx) => {
-          const judgeUrl = `${window.location.origin}/#/judge/${idx}`;
+          const magic = magicLinks[idx];
+          const judgeUrl = magic?.url || `${window.location.origin}/#/judge/${idx}`;
           const timerState = timerStates[idx] || 'idle';
           const isRunning = timerState === 'running';
           const isPaused = timerState === 'paused';
@@ -1529,20 +1604,34 @@ const ControlPanel = () => {
                   Next Route
                 </button>
 
-                <button
-                  className="px-3 py-1 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50"
-                  onClick={() => {
-                    const url = `${window.location.origin}/#/judge/${idx}`;
-                    window.open(url, '_blank');
-                  }}
-                  disabled={!lb.initiated}
-                >
-                  Open Judge View
-                </button>
-
-                <div className="mt-2 flex flex-col items-center">
-                  <span className="text-sm">Judge link</span>
-                  <QRCode value={judgeUrl} size={96} />
+                <div className="flex flex-col gap-2">
+                  <button
+                    className="px-3 py-1 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50"
+                    onClick={() => {
+                      window.open(judgeUrl, '_blank');
+                    }}
+                  >
+                    Open Judge View
+                  </button>
+                  <button
+                    className="px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+                    onClick={() => handleGenerateQr(idx)}
+                  >
+                    Generate QR
+                  </button>
+                  <button
+                    className="px-3 py-1 bg-gray-700 text-white rounded hover:bg-gray-800 disabled:opacity-50"
+                    onClick={() => handleSetJudgePassword(idx)}
+                  >
+                    Set judge password
+                  </button>
+                  <div className="mt-2 flex flex-col items-center">
+                    <span className="text-sm">
+                      Scan QR și loghează-te cu parola Judge (user ={' '}
+                      {sanitizeBoxName(lb.categorie || `Box ${idx}`)})
+                    </span>
+                    {magic && <QRCode value={judgeUrl} size={96} />}
+                  </div>
                 </div>
 
                 <div className="flex gap-2">

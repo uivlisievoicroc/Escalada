@@ -5,7 +5,7 @@ import logging
 # state per boxId
 from typing import Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from starlette.websockets import WebSocket
 
@@ -13,11 +13,8 @@ from escalada.rate_limit import check_rate_limit
 # Import validation and rate limiting
 from escalada.validation import InputSanitizer, ValidatedCmd
 from escalada.db.database import AsyncSessionLocal
-from escalada.db.repositories import (
-    BoxRepository,
-    CompetitionRepository,
-    EventRepository,
-)
+from escalada.db import repositories as repos
+from escalada.auth.deps import require_box_access, require_view_access
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +73,7 @@ class Cmd(BaseModel):
 
 
 @router.post("/cmd")
-async def cmd(cmd: Cmd):
+async def cmd(cmd: Cmd, claims=Depends(require_box_access)):
     """
     Handle competition commands with validation and rate limiting
 
@@ -476,7 +473,7 @@ from fastapi import HTTPException
 
 
 @router.get("/state/{box_id}")
-async def get_state(box_id: int):
+async def get_state(box_id: int, claims=Depends(require_view_access)):
     """
     Return current contest state for a judge client.
     Create a placeholder state with sessionId if box doesn't exist yet.
@@ -552,7 +549,7 @@ async def _ensure_state(box_id: int) -> dict:
     box_version = 0
     try:
         async with AsyncSessionLocal() as session:
-            repo = BoxRepository(session)
+            repo = repos.BoxRepository(session)
             box = await repo.get_by_id(box_id)
             if box:
                 persisted = box.state or {}
@@ -579,9 +576,9 @@ async def _persist_state(box_id: int, state: dict, action: str, payload: dict) -
     """
     try:
         async with AsyncSessionLocal() as session:
-            box_repo = BoxRepository(session)
-            comp_repo = CompetitionRepository(session)
-            event_repo = EventRepository(session)
+            box_repo = repos.BoxRepository(session)
+            comp_repo = repos.CompetitionRepository(session)
+            event_repo = repos.EventRepository(session)
 
             box = await box_repo.get_by_id(box_id)
             if not box:

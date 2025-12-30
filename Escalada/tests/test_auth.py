@@ -1,207 +1,127 @@
 """
-Test suite for auth.py JWT authentication
+Test suite for escalada.auth.service JWT authentication
 Run: poetry run pytest tests/test_auth.py -v
 """
+
+import importlib
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+
 import jwt
 from fastapi import HTTPException
 
 
+def load_service(env: dict | None = None):
+    """Reload auth.service with optional env overrides so constants pick up new values."""
+    import escalada.auth.service as svc
+
+    if env is None:
+        importlib.reload(svc)
+        return svc
+    with patch.dict("os.environ", env, clear=False):
+        importlib.reload(svc)
+    return svc
+
+
 class JWTTokenCreationTest(unittest.TestCase):
-    """Test JWT token creation"""
+    """Test JWT token creation using auth.service."""
 
     def test_create_access_token_basic(self):
-        """Test basic JWT token creation"""
-        from escalada.auth import create_access_token
-        
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
+        service = load_service()
+        token = service.create_access_token(username="testuser", role="viewer")
+
         self.assertIsNotNone(token)
         self.assertIsInstance(token, str)
         self.assertGreater(len(token), 50)
 
     def test_create_access_token_with_custom_expiry(self):
-        """Test token creation with custom expiration"""
-        from escalada.auth import create_access_token
-        
-        data = {"sub": "testuser"}
-        expires_delta = timedelta(minutes=30)
-        token = create_access_token(data, expires_delta=expires_delta)
-        
-        self.assertIsNotNone(token)
-        # Decode without verification to check expiry
-        decoded = jwt.decode(token, options={"verify_signature": False})
-        self.assertIn("exp", decoded)
-        self.assertIn("sub", decoded)
-        self.assertEqual(decoded["sub"], "testuser")
+        service = load_service()
+        token = service.create_access_token(
+            username="testuser", role="admin", expires_minutes=30
+        )
 
-    def test_create_access_token_preserves_data(self):
-        """Test that token preserves all provided data"""
-        from escalada.auth import create_access_token
-        
-        data = {"sub": "admin", "role": "superuser", "box_id": 1}
-        token = create_access_token(data)
-        
+        decoded = jwt.decode(token, options={"verify_signature": False})
+        self.assertEqual(decoded["sub"], "testuser")
+        exp_timestamp = decoded["exp"]
+        now_timestamp = datetime.now(timezone.utc).timestamp()
+        delta = exp_timestamp - now_timestamp
+        self.assertGreater(delta, 25 * 60)  # ~30 minutes with buffer
+        self.assertLess(delta, 35 * 60)
+
+    def test_create_access_token_preserves_claims(self):
+        service = load_service()
+        token = service.create_access_token(
+            username="admin", role="judge", assigned_boxes=[1, 2]
+        )
+
         decoded = jwt.decode(token, options={"verify_signature": False})
         self.assertEqual(decoded["sub"], "admin")
-        self.assertEqual(decoded["role"], "superuser")
-        self.assertEqual(decoded["box_id"], 1)
+        self.assertEqual(decoded["role"], "judge")
+        self.assertEqual(decoded["boxes"], [1, 2])
 
-    def test_create_access_token_default_expiry(self):
-        """Test token has default expiration"""
-        from escalada.auth import create_access_token
-        from datetime import UTC
-        
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
+    def test_create_access_token_default_expiry_from_env(self):
+        service = load_service({"ACCESS_TOKEN_EXPIRES_MIN": "45"})
+        token = service.create_access_token(username="user", role="viewer")
+
         decoded = jwt.decode(token, options={"verify_signature": False})
         exp_timestamp = decoded["exp"]
-        now_timestamp = datetime.now(UTC).timestamp()
-        
-        # Should expire in the future (at least 5 minutes, at most 3 hours)
-        time_diff = exp_timestamp - now_timestamp
-        self.assertGreater(time_diff, 5 * 60)      # At least 5 minutes
-        self.assertLess(time_diff, 180 * 60)        # At most 3 hours
+        now_timestamp = datetime.now(timezone.utc).timestamp()
+        delta = exp_timestamp - now_timestamp
+        self.assertGreater(delta, 40 * 60)  # close to 45 minutes
+        self.assertLess(delta, 50 * 60)
 
 
-class JWTTokenVerificationTest(unittest.TestCase):
-    """Test JWT token verification"""
+class JWTTokenDecodeTest(unittest.TestCase):
+    """Test decode_token behavior and errors."""
 
-    def test_verify_token_valid(self):
-        """Test verification of valid token"""
-        from escalada.auth import create_access_token, verify_token
-        from fastapi.security import HTTPAuthorizationCredentials
-        
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
-        # Create mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-        
-        # Should not raise exception
-        result = verify_token(credentials)
-        self.assertEqual(result["sub"], "testuser")
-        self.assertIn("exp", result)  # Should have expiration
+    def test_decode_token_valid(self):
+        service = load_service()
+        token = service.create_access_token(
+            username="testuser", role="viewer", expires_minutes=5
+        )
 
-    def test_verify_token_expired(self):
-        """Test verification of expired token"""
-        from escalada.auth import create_access_token, verify_token
-        from fastapi.security import HTTPAuthorizationCredentials
-        
-        data = {"sub": "testuser"}
-        # Create token that expires immediately
-        expires_delta = timedelta(seconds=-1)
-        token = create_access_token(data, expires_delta=expires_delta)
-        
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-        
+        claims = service.decode_token(token)
+        self.assertEqual(claims["sub"], "testuser")
+        self.assertEqual(claims["role"], "viewer")
+        self.assertIn("exp", claims)
+
+    def test_decode_token_expired(self):
+        service = load_service()
+        token = service.create_access_token(
+            username="expired", role="viewer", expires_minutes=-1
+        )
+
         with self.assertRaises(HTTPException) as context:
-            verify_token(credentials)
+            service.decode_token(token)
         self.assertEqual(context.exception.status_code, 401)
-        self.assertIn("expired", context.exception.detail.lower())
+        self.assertEqual(context.exception.detail, "token_expired")
 
-    def test_verify_token_invalid_signature(self):
-        """Test verification of token with invalid signature"""
-        from escalada.auth import verify_token
-        from fastapi.security import HTTPAuthorizationCredentials
-        
-        # Create token with wrong signature
-        invalid_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0In0.invalid_signature"
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=invalid_token)
-        
+    def test_decode_token_invalid_signature(self):
+        service = load_service({"JWT_SECRET": "real-secret"})
+        payload = {
+            "sub": "user",
+            "role": "viewer",
+            "boxes": [],
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        }
+        forged = jwt.encode(payload, "wrong-secret", algorithm="HS256")
+
         with self.assertRaises(HTTPException) as context:
-            verify_token(credentials)
+            service.decode_token(forged)
         self.assertEqual(context.exception.status_code, 401)
-
-    def test_verify_token_malformed(self):
-        """Test verification of malformed token"""
-        from escalada.auth import verify_token
-        from fastapi.security import HTTPAuthorizationCredentials
-        
-        malformed_token = "not.a.valid.jwt.token"
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=malformed_token)
-        
-        with self.assertRaises(HTTPException) as context:
-            verify_token(credentials)
-        self.assertEqual(context.exception.status_code, 401)
+        self.assertEqual(context.exception.detail, "invalid_token")
 
 
-class WebSocketTokenVerificationTest(unittest.TestCase):
-    """Test WebSocket token verification"""
+class JWTConfigTest(unittest.TestCase):
+    """Test environment-driven configuration."""
 
-    def test_verify_ws_token_valid(self):
-        """Test WebSocket token verification with valid token"""
-        from escalada.auth import create_access_token, verify_ws_token
-        
-        data = {"sub": "wsuser"}
-        token = create_access_token(data)
-        
-        result = verify_ws_token(token)
-        self.assertEqual(result["sub"], "wsuser")
-        self.assertIn("exp", result)  # Should have expiration
-
-    def test_verify_ws_token_none(self):
-        """Test WebSocket token verification with None token"""
-        from escalada.auth import verify_ws_token
-        
-        with self.assertRaises(HTTPException) as context:
-            verify_ws_token(None)
-        self.assertEqual(context.exception.status_code, 401)
-        self.assertIn("Missing", context.exception.detail)
-
-    def test_verify_ws_token_empty_string(self):
-        """Test WebSocket token verification with empty string"""
-        from escalada.auth import verify_ws_token
-        
-        with self.assertRaises(HTTPException) as context:
-            verify_ws_token("")
-        self.assertEqual(context.exception.status_code, 401)
-
-    def test_verify_ws_token_expired(self):
-        """Test WebSocket token verification with expired token"""
-        from escalada.auth import create_access_token, verify_ws_token
-        
-        data = {"sub": "wsuser"}
-        expires_delta = timedelta(seconds=-1)
-        token = create_access_token(data, expires_delta=expires_delta)
-        
-        with self.assertRaises(HTTPException) as context:
-            verify_ws_token(token)
-        self.assertEqual(context.exception.status_code, 401)
-
-
-class SecretKeyTest(unittest.TestCase):
-    """Test SECRET_KEY handling"""
-
-    @patch.dict('os.environ', {'SECRET_KEY': 'test_secret_key_123'})
     def test_secret_key_from_environment(self):
-        """Test that SECRET_KEY is read from environment"""
-        # Reimport to pick up mocked environment
-        import importlib
-        import escalada.auth
-        importlib.reload(escalada.auth)
-        
-        from escalada.auth import create_access_token
-        
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
-        # Token should be created successfully with env secret
-        self.assertIsNotNone(token)
+        service = load_service({"JWT_SECRET": "test_secret_key_123"})
+        token = service.create_access_token(username="envuser", role="viewer")
 
-    def test_secret_key_fallback(self):
-        """Test that SECRET_KEY has fallback value"""
-        from escalada.auth import create_access_token
-        
-        # Should work even without SECRET_KEY in env (uses fallback)
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
-        self.assertIsNotNone(token)
+        decoded = jwt.decode(token, "test_secret_key_123", algorithms=["HS256"])
+        self.assertEqual(decoded["sub"], "envuser")
 
 
 if __name__ == "__main__":
