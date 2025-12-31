@@ -22,6 +22,14 @@ import ModalModifyScore from './ModalModifyScore';
 import getWinners from '../utilis/getWinners';
 import useWebSocketWithHeartbeat from '../utilis/useWebSocketWithHeartbeat';
 import { normalizeStorageValue } from '../utilis/normalizeStorageValue';
+import {
+  downloadBoxBackup,
+  downloadFullBackup,
+  downloadBoxCsv,
+  getLastBackupMeta,
+  downloadLastBackup,
+} from '../utilis/backup';
+import ModalRestore from './ModalRestore';
 import { login, getStoredToken, setJudgePassword, clearAuth, getAuthHeader } from '../utilis/auth';
 import LoginOverlay from './LoginOverlay';
 
@@ -130,6 +138,9 @@ const ControlPanel = () => {
   }, [registeredTimes]);
   const [rankingStatus, setRankingStatus] = useState({});
   const [loadingBoxes, setLoadingBoxes] = useState(new Set()); // TASK 3.1: Track loading operations
+  const [exportMenuOpen, setExportMenuOpen] = useState({});
+  const [lastBackupMeta, setLastBackupMeta] = useState(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
 
   // Refs pentru a păstra ultima versiune a stărilor
   const listboxesRef = useRef(listboxes);
@@ -1300,6 +1311,68 @@ const ControlPanel = () => {
       }
     }
   };
+
+  const handleExportBoxJson = async (idx) => {
+    try {
+      const data = await downloadBoxBackup(idx);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `box_${idx}_backup.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      debugError('Failed to export box JSON', err);
+      alert('Export JSON eșuat: asigură-te că ești logat ca admin.');
+    }
+  };
+
+  const handleExportBoxCsv = async (idx) => {
+    try {
+      await downloadBoxCsv(idx);
+    } catch (err) {
+      debugError('Failed to export box CSV', err);
+      alert('Export CSV eșuat: asigură-te că ești logat ca admin.');
+    }
+  };
+
+  const handleExportAll = async () => {
+    try {
+      const data = await downloadFullBackup();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'backup_full.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      debugError('Failed to export full backup', err);
+      alert('Export complet eșuat: asigură-te că ești logat ca admin.');
+    }
+  };
+
+  const toggleExportMenu = (idx) => {
+    setExportMenuOpen((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  // Fetch last backup metadata on mount (if admin)
+  useEffect(() => {
+    if (showAdminLogin) return;
+    (async () => {
+      try {
+        const meta = await getLastBackupMeta();
+        setLastBackupMeta(meta);
+      } catch (err) {
+        debugWarn('No backup metadata available yet', err);
+      }
+    })();
+  }, [showAdminLogin]);
   // Asigură login admin la pornire (pentru generare token/QR)
   useEffect(() => {
     const checkAuth = async () => {
@@ -1340,8 +1413,55 @@ const ControlPanel = () => {
           }}
         />
       )}
+      {showRestoreModal && (
+        <ModalRestore
+          isOpen={showRestoreModal}
+          onClose={() => setShowRestoreModal(false)}
+          onSuccess={() => alert('Restore complet')}
+        />
+      )}
       <div className="w-full max-w-md mx-auto">
         <h1 className="text-3xl font-bold text-center mb-6">Control Panel</h1>
+        {!showAdminLogin && (
+          <>
+            <div className="flex justify-center mb-3">
+              <button
+                className="text-sm text-gray-600 underline"
+                onClick={() => {
+                  clearAuth();
+                  setAdminToken(null);
+                  setShowAdminLogin(true);
+                }}
+              >
+                Reautentificare admin (pentru upload/export)
+              </button>
+            </div>
+            {lastBackupMeta && (
+              <div className="mb-3 text-center text-sm text-gray-700">
+                Ultimul backup: {lastBackupMeta.filename}{' '}
+                {lastBackupMeta.timestamp
+                  ? `(${new Date(lastBackupMeta.timestamp).toLocaleString()})`
+                  : ''}
+                <button
+                  className="ml-2 px-2 py-1 bg-slate-600 text-white rounded hover:bg-slate-700 text-xs"
+                  onClick={async () => {
+                    try {
+                      await downloadLastBackup();
+                    } catch (err) {
+                      debugError('Failed to download last backup', err);
+                      alert(
+                        'Nu am putut descărca ultimul backup. Reloghează-te ca admin sau verifică dacă există backup-uri.',
+                      );
+                    }
+                  }}
+                >
+                  Download
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
         <div className="flex gap-2 justify-center mb-4">
           <button
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -1354,6 +1474,12 @@ const ControlPanel = () => {
             onClick={() => setShowTimerModal(true)}
           >
             Set Timer
+          </button>
+          <button
+            className="px-4 py-2 bg-slate-700 text-white rounded hover:bg-slate-800"
+            onClick={() => setShowRestoreModal(true)}
+          >
+            Restore backup
           </button>
         </div>
 
@@ -1663,6 +1789,58 @@ const ControlPanel = () => {
                   Generate Rankings
                 </button>
 
+                <button
+                  className="mt-2 px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                  onClick={() => handleCeremony(sanitizeBoxName(lb.categorie || `Box ${idx}`))}
+                >
+                  Award ceremony
+                </button>
+
+                <div className="mt-2">
+                  <button
+                    className="w-full px-3 py-1 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50"
+                    onClick={() => toggleExportMenu(idx)}
+                  >
+                    Export…
+                  </button>
+                  {exportMenuOpen[idx] && (
+                    <div className="mt-2 flex flex-col gap-1 bg-white border border-gray-300 rounded shadow p-2">
+                      <button
+                        className="px-3 py-1 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50"
+                        onClick={() => handleExportBoxJson(idx)}
+                      >
+                        Export box (JSON)
+                      </button>
+                      <button
+                        className="px-3 py-1 bg-amber-700 text-white rounded hover:bg-amber-800 disabled:opacity-50"
+                        onClick={() => handleExportBoxCsv(idx)}
+                      >
+                        Export box (CSV)
+                      </button>
+                      <button
+                        className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                        onClick={handleExportAll}
+                      >
+                        Export ALL (JSON)
+                      </button>
+                      <button
+                        className="px-3 py-1 bg-slate-600 text-white rounded hover:bg-slate-700 disabled:opacity-50"
+                        onClick={async () => {
+                          try {
+                            await downloadLastBackup();
+                          } catch (err) {
+                            debugError('Failed to download last backup', err);
+                            alert(
+                              'Nu am putut descărca ultimul backup. Reloghează-te ca admin sau verifică dacă există backup-uri.',
+                            );
+                          }
+                        }}
+                      >
+                        Download last backup
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {rankingStatus[idx]?.message && (
                   <div
                     className={`text-sm mt-1 px-2 py-1 rounded ${
@@ -1674,13 +1852,6 @@ const ControlPanel = () => {
                     {rankingStatus[idx].message}
                   </div>
                 )}
-
-                <button
-                  className="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-                  onClick={() => handleCeremony(sanitizeBoxName(lb.categorie))}
-                >
-                  Award Ceremony
-                </button>
               </div>
             </details>
           );

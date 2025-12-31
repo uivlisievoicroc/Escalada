@@ -50,6 +50,10 @@ Status: Propuneri structurate pe prioritati (1-20)
  	- Depends/guard comun care validează `role` + `assignedBoxes` înaintea validărilor comenzii.
  	- JWT payload include `role`, `userId`, `assignedBoxes` pentru evaluare rapidă.
  	- Erori standardizate: `forbidden_role`, `forbidden_box`, `forbidden_action`.
+ - Coduri de eroare & handling frontend:
+	- HTTP 401: `invalid_token` / `token_expired` → curăță token-ul și afișează ecran de login.
+	- HTTP 403: `forbidden_role` / `forbidden_box` → mesaj „nu ai acces la acest box”, oprește acțiunea.
+	- WS close: 4401 `token_required`/`invalid_token`, 4403 `forbidden_box_or_role` → închide socket-ul, redirecționează la login.
 
 <a id="p3"></a>
 3) Backup si export date

@@ -87,7 +87,7 @@ export async function magicLogin(token) {
 
 export async function generateMagicToken(boxId) {
   const res = await fetchWithRetry(
-    `${API_BASE}/api/auth/admin/boxes/${boxId}/magic-token`,
+    `${API_BASE}/api/admin/auth/boxes/${boxId}/magic-token`,
     { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() } },
     1,
     5000,
@@ -101,7 +101,7 @@ export async function generateMagicToken(boxId) {
 
 export async function setJudgePassword(boxId, password, username) {
   const res = await fetchWithRetry(
-    `${API_BASE}/api/auth/admin/boxes/${boxId}/password`,
+    `${API_BASE}/api/admin/auth/boxes/${boxId}/password`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeader() },

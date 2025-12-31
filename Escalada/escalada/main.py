@@ -1,9 +1,11 @@
+import asyncio
 import logging
 import os
 import sys
 from contextlib import asynccontextmanager
 from time import time
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
@@ -12,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from escalada.api.auth import router as auth_router
 from escalada.api.live import router as live_router
 from escalada.api.podium import router as podium_router
+from escalada.api.backup import router as backup_router
 from escalada.api.save_ranking import router as save_ranking_router
 from escalada.db.database import get_session
 from escalada.db.health import health_check_db
@@ -28,6 +31,14 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# Load .env early for CORS/DB settings
+load_dotenv()
+
+BACKUP_INTERVAL_MIN = int(os.getenv("BACKUP_INTERVAL_MIN", "10"))
+BACKUP_RETENTION_FILES = int(os.getenv("BACKUP_RETENTION_FILES", "20"))
+BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
+backup_task = None
+
 
 # Define application lifespan (replaces deprecated @app.on_event)
 @asynccontextmanager
@@ -39,9 +50,39 @@ async def lifespan(app: FastAPI):
         await run_migrations()
     except Exception as e:
         logger.error(f"Auto-migration failed: {e}", exc_info=True)
+    # Start periodic backup task
+    from pathlib import Path
+    from escalada.api.backup import collect_snapshots, write_backup_file
+    from escalada.db.database import AsyncSessionLocal
+
+    async def _backup_loop():
+        while True:
+            await asyncio.sleep(BACKUP_INTERVAL_MIN * 60)
+            try:
+                async with AsyncSessionLocal() as session:
+                    snaps = await collect_snapshots(session)
+                path = await write_backup_file(Path(BACKUP_DIR), snaps)
+                logger.info(f"Periodic backup saved to {path}")
+                files = sorted(Path(BACKUP_DIR).glob("backup_*.json"), reverse=True)
+                for old in files[BACKUP_RETENTION_FILES:]:
+                    try:
+                        old.unlink()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"Periodic backup failed: {e}", exc_info=True)
+
+    global backup_task
+    backup_task = asyncio.create_task(_backup_loop())
     yield
     # Shutdown logic
     logger.info("🛑 Escalada API shutting down...")
+    if backup_task:
+        backup_task.cancel()
+        try:
+            await backup_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -122,3 +163,4 @@ app.include_router(save_ranking_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(live_router, prefix="/api")
 app.include_router(podium_router, prefix="/api")
+app.include_router(backup_router, prefix="/api/admin")

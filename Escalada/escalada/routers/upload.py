@@ -4,7 +4,7 @@ from zipfile import BadZipFile
 import openpyxl
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-router = APIRouter(tags=["upload"])
+router = APIRouter(tags=["upload"], prefix="/admin")
 from escalada.auth.deps import require_role
 
 

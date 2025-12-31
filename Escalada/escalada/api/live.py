@@ -275,6 +275,28 @@ async def cmd(cmd: Cmd, claims=Depends(require_box_access)):
                 else sm.get("lastRegisteredTime")
             )
             cmd.registeredTime = effective_time
+            # Persist score/time în state pentru export/backup
+            if cmd.competitor:
+                scores = sm.get("scores") or {}
+                times = sm.get("times") or {}
+                route_idx = max((sm.get("routeIndex") or 1) - 1, 0)
+                # score
+                if cmd.score is not None:
+                    arr = scores.get(cmd.competitor) or []
+                    # ensure length
+                    while len(arr) <= route_idx:
+                        arr.append(None)
+                    arr[route_idx] = cmd.score
+                    scores[cmd.competitor] = arr
+                # time
+                if effective_time is not None:
+                    tarr = times.get(cmd.competitor) or []
+                    while len(tarr) <= route_idx:
+                        tarr.append(None)
+                    tarr[route_idx] = effective_time
+                    times[cmd.competitor] = tarr
+                sm["scores"] = scores
+                sm["times"] = times
             sm["started"] = False
             sm["timerState"] = "idle"
             sm["holdCount"] = 0.0

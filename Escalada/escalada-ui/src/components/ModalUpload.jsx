@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { debugLog, debugError } from '../utilis/debug';
-
+import { getAuthHeader, clearAuth } from '../utilis/auth';
+// NOTE: admin-only route now under /api/admin
 const API_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
-const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000/api`;
+const API_BASE = `${API_PROTOCOL}://${window.location.hostname}:8000/api/admin`;
 
 const ModalUpload = ({ isOpen, onClose, onUpload }) => {
   const [category, setCategory] = useState('');
@@ -33,10 +34,16 @@ const ModalUpload = ({ isOpen, onClose, onUpload }) => {
 
       const res = await fetch(`${API_BASE}/upload`, {
         method: 'POST',
+        headers: { ...getAuthHeader() },
         body: formData,
       });
 
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          clearAuth();
+          alert('Nu ești autentificat ca admin. Reloghează-te.');
+          return;
+        }
         const errorText = await res.text();
         debugError('Eroare la upload:', errorText);
         alert(`Eroare: ${errorText}`);

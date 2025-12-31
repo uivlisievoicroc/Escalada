@@ -67,7 +67,7 @@ async def magic_login(payload: MagicLoginRequest) -> TokenResponse:
     raise HTTPException(status_code=status.HTTP_410_GONE, detail="magic_login_disabled")
 
 
-@router.post("/auth/admin/boxes/{box_id}/magic-token")
+@router.post("/admin/auth/boxes/{box_id}/magic-token")
 async def issue_magic_token(box_id: int, claims=Depends(require_role(["admin"]))):
     """
     Magic tokens dezactivate.
@@ -80,7 +80,7 @@ class SetJudgePasswordRequest(BaseModel):
     username: Optional[str] = None
 
 
-@router.post("/auth/admin/boxes/{box_id}/password")
+@router.post("/admin/auth/boxes/{box_id}/password")
 async def set_judge_password(
     box_id: int,
     payload: SetJudgePasswordRequest,
