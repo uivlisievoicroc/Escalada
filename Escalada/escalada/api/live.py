@@ -7,13 +7,23 @@ from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from starlette.websockets import WebSocket
 
 from escalada.rate_limit import check_rate_limit
 # Import validation and rate limiting
-from escalada.validation import InputSanitizer, ValidatedCmd
+from escalada_core import (
+    ValidatedCmd,
+    ValidationError,
+    apply_command,
+    default_state,
+    parse_timer_preset,
+    toggle_time_criterion,
+    validate_session_and_version,
+)
 from escalada.db.database import AsyncSessionLocal
 from escalada.db import repositories as repos
+from escalada.db.models import Box
 from escalada.auth.deps import (
     require_box_access,
     require_view_access,
@@ -36,6 +46,36 @@ channels_lock = asyncio.Lock()  # Protects concurrent access to channels dict
 
 # Test mode - disable validation for backward compatibility
 VALIDATION_ENABLED = True
+
+
+async def preload_states_from_db() -> int:
+    """
+    Hydrate in-memory state_map from DB at startup to ensure automatic restore.
+    Returns number of boxes loaded.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Box))
+            boxes = result.scalars().all()
+    except Exception as exc:
+        logger.warning(f"Skipped preloading states from DB: {exc}")
+        return 0
+
+    loaded = 0
+    async with init_lock:
+        for box in boxes:
+            state = default_state(box.session_id)
+            state.update(box.state or {})
+            state["boxVersion"] = box.box_version or 0
+            if box.session_id:
+                state["sessionId"] = box.session_id
+            state_map[box.id] = state
+            state_locks[box.id] = state_locks.get(box.id) or asyncio.Lock()
+            loaded += 1
+
+    if loaded:
+        logger.info(f"Preloaded {loaded} box states from DB")
+    return loaded
 
 
 class Cmd(BaseModel):
@@ -141,8 +181,10 @@ async def cmd(cmd: Cmd, claims=Depends(require_box_access)):
     if cmd.type == "SET_TIME_CRITERION":
         global time_criterion_enabled
         async with time_criterion_lock:
-            time_criterion_enabled = bool(cmd.timeCriterionEnabled)
-        await _broadcast_time_criterion()
+            time_criterion_enabled, tc_payload = toggle_time_criterion(
+                time_criterion_enabled, cmd.timeCriterionEnabled
+            )
+        await _broadcast_time_criterion(tc_payload)
         return {"status": "ok"}
 
     # Lock state access for this boxId
@@ -150,231 +192,58 @@ async def cmd(cmd: Cmd, claims=Depends(require_box_access)):
         # Initialize state INSIDE the lock (no window for race condition)
         sm = await _ensure_state(cmd.boxId)
 
-        # Update server-side state snapshot
-        sm = state_map[cmd.boxId]
-
         # ==================== SESSION & VERSION VALIDATION ====================
         # Enforce session/version only when validation is enabled (test-mode bypass)
         if VALIDATION_ENABLED:
-            # CRITICAL: Enforce sessionId for all commands except INIT_ROUTE
-            if cmd.type != "INIT_ROUTE":
-                if not cmd.sessionId:
+            validation_error: ValidationError | None = validate_session_and_version(
+                sm,
+                cmd.model_dump(),
+                require_session=cmd.type != "INIT_ROUTE",
+            )
+            if validation_error:
+                if validation_error.status_code:
                     logger.warning(
                         f"Command {cmd.type} for box {cmd.boxId} missing sessionId"
                     )
                     raise HTTPException(
-                        status_code=400,
-                        detail="sessionId required for all commands except INIT_ROUTE",
+                        status_code=validation_error.status_code,
+                        detail=validation_error.message,
                     )
-
-                current_session = sm.get("sessionId")
-                if current_session and cmd.sessionId != current_session:
+                if validation_error.kind:
                     logger.warning(
-                        f"Stale sessionId for box {cmd.boxId}: "
-                        f"received {cmd.sessionId}, expected {current_session}"
+                        f"Command {cmd.type} for box {cmd.boxId} rejected: {validation_error.kind}"
                     )
-                    return {"status": "ignored", "reason": "stale_session"}
+                    return {"status": "ignored", "reason": validation_error.kind}
 
-            # TASK 2.6: Validate boxVersion if present (prevents stale commands from old browser tabs)
-            if cmd.boxVersion is not None:
-                current_version = sm.get("boxVersion", 0)
-                if cmd.boxVersion < current_version:
-                    logger.warning(
-                        f"Stale command for box {cmd.boxId}: "
-                        f"version {cmd.boxVersion} < {current_version}"
-                    )
-                    return {"status": "ignored", "reason": "stale_version"}
-
-        if cmd.type == "INIT_ROUTE":
-            # INIT_ROUTE: update competition details and mark as initiated
-            # sessionId already generated at state creation
-            cmd.sessionId = sm["sessionId"]  # Use existing sessionId
-            # TASK 2.6: Increment boxVersion on INIT_ROUTE to invalidate old commands
-            sm["boxVersion"] = sm.get("boxVersion", 0) + 1
-            sm["initiated"] = True
-            sm["holdsCount"] = cmd.holdsCount or 0
-            sm["routeIndex"] = cmd.routeIndex or 1
-            # Normalize competitors: ensure dicts with safe 'nume' and boolean 'marked'
-            normalized_competitors: list[dict] = []
-            if cmd.competitors:
-                for comp in cmd.competitors:
-                    try:
-                        if not isinstance(comp, dict):
-                            continue
-                        name = comp.get("nume")
-                        if not isinstance(name, str):
-                            continue
-                        safe_name = InputSanitizer.sanitize_competitor_name(name)
-                        if not safe_name:
-                            continue
-                        marked_val = comp.get("marked", False)
-                        # Coerce to boolean if present
-                        marked_bool = (
-                            bool(marked_val)
-                            if isinstance(marked_val, (bool, int, str))
-                            else False
-                        )
-                        normalized_competitors.append(
-                            {"nume": safe_name, "marked": marked_bool}
-                        )
-                    except Exception:
-                        # Silently skip malformed competitor entries
-                        continue
-            sm["competitors"] = normalized_competitors
-            sm["currentClimber"] = (
-                normalized_competitors[0]["nume"] if normalized_competitors else ""
-            )
-            sm["started"] = False
-            sm["timerState"] = "idle"
-            sm["holdCount"] = 0.0
-            sm["lastRegisteredTime"] = None
-            sm["remaining"] = None
-            if cmd.categorie:
-                sm["categorie"] = cmd.categorie
-            if cmd.timerPreset:
-                sm["timerPreset"] = cmd.timerPreset
-                sm["timerPresetSec"] = _parse_timer_preset(cmd.timerPreset)
-        elif cmd.type == "START_TIMER":
-            sm["started"] = True
-            sm["timerState"] = "running"
-            sm["lastRegisteredTime"] = None
-            sm["remaining"] = None
-        elif cmd.type == "STOP_TIMER":
-            sm["started"] = False
-            sm["timerState"] = "paused"
-        elif cmd.type == "RESUME_TIMER":
-            sm["started"] = True
-            sm["timerState"] = "running"
-            sm["lastRegisteredTime"] = None
-        elif cmd.type == "PROGRESS_UPDATE":
-            delta = cmd.delta or 1
-            new_count = (
-                (int(sm["holdCount"]) + 1)
-                if delta == 1
-                else round(sm["holdCount"] + delta, 1)
-            )
-            # Clamp lower bound
-            if new_count < 0:
-                new_count = 0.0
-            # Cap to holdsCount only when it's a positive configured maximum
-            max_holds = sm.get("holdsCount") or 0
-            if isinstance(max_holds, int) and max_holds > 0 and new_count > max_holds:
-                new_count = float(max_holds)
-            sm["holdCount"] = new_count
-        elif cmd.type == "REGISTER_TIME":
-            # doar persistăm dacă avem un timp valid
-            if cmd.registeredTime is not None:
-                sm["lastRegisteredTime"] = cmd.registeredTime
-        elif cmd.type == "TIMER_SYNC":
-            sm["remaining"] = cmd.remaining
-        elif cmd.type == "SUBMIT_SCORE":
-            # Folosește timpul memorat anterior dacă nu e trimis în request
-            effective_time = (
-                cmd.registeredTime
-                if cmd.registeredTime is not None
-                else sm.get("lastRegisteredTime")
-            )
-            cmd.registeredTime = effective_time
-            # Persist score/time în state pentru export/backup
-            if cmd.competitor:
-                scores = sm.get("scores") or {}
-                times = sm.get("times") or {}
-                route_idx = max((sm.get("routeIndex") or 1) - 1, 0)
-                # score
-                if cmd.score is not None:
-                    arr = scores.get(cmd.competitor) or []
-                    # ensure length
-                    while len(arr) <= route_idx:
-                        arr.append(None)
-                    arr[route_idx] = cmd.score
-                    scores[cmd.competitor] = arr
-                # time
-                if effective_time is not None:
-                    tarr = times.get(cmd.competitor) or []
-                    while len(tarr) <= route_idx:
-                        tarr.append(None)
-                    tarr[route_idx] = effective_time
-                    times[cmd.competitor] = tarr
-                sm["scores"] = scores
-                sm["times"] = times
-            sm["started"] = False
-            sm["timerState"] = "idle"
-            sm["holdCount"] = 0.0
-            sm["lastRegisteredTime"] = effective_time
-            sm["remaining"] = None
-            # marchează competitorul și mută la următorul
-            if sm.get("competitors"):
-                for comp in sm["competitors"]:
-                    # Validate that competitor has required fields
-                    if not isinstance(comp, dict):
-                        logger.error(f"Invalid competitor object: {comp}")
-                        continue
-                    if comp.get("nume") == cmd.competitor:
-                        comp["marked"] = True
-                        break
-                next_comp = next(
-                    (
-                        c.get("nume")
-                        for c in sm["competitors"]
-                        if isinstance(c, dict) and not c.get("marked")
-                    ),
-                    "",
-                )
-                sm["currentClimber"] = next_comp
-        elif cmd.type == "REQUEST_STATE":
+        # Handle request-state early (transport-only)
+        if cmd.type == "REQUEST_STATE":
             await _send_state_snapshot(cmd.boxId)
             return {"status": "ok"}
-        elif cmd.type == "RESET_BOX":
-            # Reset per-box state and regenerate sessionId to invalidate stale tabs
-            import uuid
 
-            sm["initiated"] = False
-            sm["currentClimber"] = ""
-            sm["started"] = False
-            sm["timerState"] = "idle"
-            sm["holdCount"] = 0.0
-            sm["lastRegisteredTime"] = None
-            sm["remaining"] = None
-            sm["competitors"] = []
-            sm["categorie"] = ""
-            sm["timerPreset"] = None
-            sm["timerPresetSec"] = None
-            # Preserve existing routeIndex/holdsCount; ControlPanel re-sends INIT_ROUTE
-            sm["sessionId"] = str(uuid.uuid4())
-            # Broadcast fresh snapshot for clients
-            await _send_state_snapshot(cmd.boxId)
-            return {"status": "ok"}
-        # else: leave previous state for other types
+        outcome = apply_command(sm, cmd.model_dump())
+        sm = outcome.state
+        cmd_payload = outcome.cmd_payload
 
         # Persist snapshot + audit log for state-changing commands
-        if cmd.type != "REQUEST_STATE":
-            persist_result = await _persist_state(cmd.boxId, sm, cmd.type, cmd.model_dump())
-            if persist_result == "stale":
-                return {"status": "ignored", "reason": "stale_version"}
+        persist_result = await _persist_state(cmd.boxId, sm, cmd.type, cmd_payload)
+        if persist_result == "stale":
+            return {"status": "ignored", "reason": "stale_version"}
 
         # Broadcast command echo to all active WebSockets for this box
-        await _broadcast_to_box(cmd.boxId, cmd.model_dump())
+        await _broadcast_to_box(cmd.boxId, cmd_payload)
 
-        # Send authoritative snapshot for real-time clients
-        if cmd.type in {
-            "INIT_ROUTE",
-            "PROGRESS_UPDATE",
-            "START_TIMER",
-            "STOP_TIMER",
-            "RESUME_TIMER",
-            "REGISTER_TIME",
-            "SUBMIT_SCORE",
-        }:
+        # Send authoritative snapshot for real-time clients when needed
+        if outcome.snapshot_required:
             await _send_state_snapshot(cmd.boxId)
 
     return {"status": "ok"}
 
 
 async def _heartbeat(ws: WebSocket, box_id: int) -> None:
-    """Send PING every 30s; close if no PONG for 90s."""
+    """Send PING every 30s; close if no PONG for 60s."""
     last_pong = asyncio.get_event_loop().time()
     heartbeat_interval = 30
-    heartbeat_timeout = 90
+    heartbeat_timeout = 60
 
     while True:
         try:
@@ -614,11 +483,11 @@ async def _ensure_state(box_id: int) -> dict:
     except Exception as e:
         logger.warning(f"Failed to hydrate box {box_id} from DB: {e}")
 
-    state = _default_state(session_id)
+    state = default_state(session_id)
     state.update(persisted or {})
     state["boxVersion"] = box_version
     if not state.get("sessionId"):
-        state["sessionId"] = state.get("sessionId") or _default_state()["sessionId"]
+        state["sessionId"] = state.get("sessionId") or default_state()["sessionId"]
 
     async with init_lock:
         state_map[box_id] = state
@@ -662,7 +531,7 @@ async def _persist_state(box_id: int, state: dict, action: str, payload: dict) -
             if not success:
                 # Refresh in-memory state with authoritative DB snapshot
                 await box_repo.refresh(box)
-                authoritative = box.state or _default_state(box.session_id)
+                authoritative = box.state or default_state(box.session_id)
                 authoritative["boxVersion"] = box.box_version
                 if box.session_id:
                     authoritative["sessionId"] = box.session_id
@@ -692,42 +561,16 @@ async def _persist_state(box_id: int, state: dict, action: str, payload: dict) -
 
 
 def _default_state(session_id: str | None = None) -> dict:
-    import uuid
-
-    return {
-        "initiated": False,
-        "holdsCount": 0,
-        "currentClimber": "",
-        "started": False,
-        "timerState": "idle",
-        "holdCount": 0.0,
-        "routeIndex": 1,
-        "competitors": [],
-        "categorie": "",
-        "lastRegisteredTime": None,
-        "remaining": None,
-        "timerPreset": None,
-        "timerPresetSec": None,
-        "sessionId": session_id or str(uuid.uuid4()),
-        "boxVersion": 0,
-    }
+    """Backward-compatible alias for tests."""
+    return default_state(session_id)
 
 
 def _parse_timer_preset(preset: str | None) -> int | None:
-    if not preset:
-        return None
-    try:
-        minutes, seconds = (preset or "").split(":")
-        return int(minutes or 0) * 60 + int(seconds or 0)
-    except Exception:
-        return None
+    """Backward-compatible alias for tests."""
+    return parse_timer_preset(preset)
 
 
-async def _broadcast_time_criterion():
-    payload = {
-        "type": "TIME_CRITERION",
-        "timeCriterionEnabled": time_criterion_enabled,
-    }
+async def _broadcast_time_criterion(payload: dict):
     for sockets in channels.values():
         for ws in list(sockets):
             try:

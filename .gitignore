@@ -4,9 +4,14 @@ __pycache__/
 .env
 .vscode/
 node_modules/
+Escalada/node_modules/
 dist/
 build/
 *.pdf
-*.xlsx.
+*.xlsx
+Escalada/backups/
 Escalada/escalada/clasamente/
 .DS_Store
+repos/
+
+.poetry-cache/

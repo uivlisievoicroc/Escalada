@@ -16,6 +16,7 @@ from escalada.api.live import router as live_router
 from escalada.api.podium import router as podium_router
 from escalada.api.backup import router as backup_router
 from escalada.api.save_ranking import router as save_ranking_router
+from escalada.api import live as live_module
 from escalada.db.database import get_session
 from escalada.db.health import health_check_db
 from escalada.db.models import Box, Competition, Event
@@ -50,6 +51,10 @@ async def lifespan(app: FastAPI):
         await run_migrations()
     except Exception as e:
         logger.error(f"Auto-migration failed: {e}", exc_info=True)
+    try:
+        await live_module.preload_states_from_db()
+    except Exception as e:
+        logger.warning(f"State preload skipped: {e}")
     # Start periodic backup task
     from pathlib import Path
     from escalada.api.backup import collect_snapshots, write_backup_file

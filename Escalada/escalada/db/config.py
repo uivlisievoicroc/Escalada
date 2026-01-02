@@ -8,8 +8,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://postgres:postgres@localhost:5432/escalada_dev",
+        "TEST_DATABASE_URL",
+        os.getenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://escalada:escalada@localhost:5432/escalada_dev",
+        ),
     )
     log_sql: bool = os.getenv("LOG_SQL", "false").lower() == "true"
 

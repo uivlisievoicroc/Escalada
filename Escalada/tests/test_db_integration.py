@@ -1,5 +1,8 @@
 """
 Database integration tests covering versioning, dedup, and constraints.
+Requires Postgres reachable via TEST_DATABASE_URL/DATABASE_URL
+(defaults to postgresql+asyncpg://escalada:escalada@localhost:5432/escalada_dev,
+matching docker-compose db service). Skips gracefully if DB is down.
 """
 import pytest
 import pytest_asyncio
@@ -36,16 +39,23 @@ def _make_sessionmaker():
 async def db_session():
     """Provide a clean test database session with isolated engine per test."""
     engine, SessionMaker = _make_sessionmaker()
-    async with SessionMaker() as session:
-        await session.execute(
-            text(
-                "TRUNCATE events, competitors, boxes, competitions RESTART IDENTITY CASCADE"
+    try:
+        async with SessionMaker() as session:
+            # Availability probe; skip if DB is down (use TEST_DATABASE_URL or docker-compose up db)
+            await session.execute(text("SELECT 1"))
+            await session.execute(
+                text(
+                    "TRUNCATE events, competitors, boxes, competitions RESTART IDENTITY CASCADE"
+                )
             )
-        )
-        await session.commit()
-        yield session
-        await session.rollback()
-    await engine.dispose()
+            await session.commit()
+            yield session
+            await session.rollback()
+    except Exception as exc:  # pragma: no cover
+        await engine.dispose()
+        pytest.skip(f"Database unavailable ({exc}); start Postgres or set TEST_DATABASE_URL")
+    else:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -168,10 +178,17 @@ async def test_seed_idempotent():
     """Test that running seed multiple times doesn't create duplicates."""
     from escalada.scripts.seed import seed
 
+    engine, SessionMaker = _make_sessionmaker()
+    try:
+        async with SessionMaker() as probe:
+            await probe.execute(text("SELECT 1"))
+    except Exception as exc:  # pragma: no cover
+        await engine.dispose()
+        pytest.skip(f"Database unavailable ({exc}); start Postgres or set TEST_DATABASE_URL")
+
     # First run
     await seed()
 
-    engine, SessionMaker = _make_sessionmaker()
     # Get initial counts
     async with SessionMaker() as session:
         comp_result = await session.execute(
